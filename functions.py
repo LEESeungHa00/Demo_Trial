@@ -331,18 +331,3 @@ def main_dashboard():
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 if st.session_state['logged_in']: main_dashboard()
 else: login_screen()
-```
-
----
-
-### 2. 문제 진단 (사용자 확인 필요)
-
-코드를 업데이트하고 앱을 재부팅한 후, **다시 한번 '분석하기' 버튼을 눌러주세요.**
-
-이제 저장에 실패하면, 아래와 같이 **자세한 오류 내용**이 빨간색 박스 안에 나타날 것입니다.
-
-**예시:**
-> Google Sheets API 오류로 저장에 실패했습니다.
-> `{"error": {"code": 403, "message": "The caller does not have permission", "status": "PERMISSION_DENIED"}}`
-
-이 메시지를 저에게 알려주시면, 정확한 원인을 파악하고 최종 해결책을 제시해 드릴 수 있습
