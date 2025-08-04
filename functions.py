@@ -13,7 +13,7 @@ from pandas_gbq import read_gbq
 st.set_page_config(layout="wide", page_title="수입 경쟁력 진단 솔루션")
 
 # --- Google BigQuery에서 데이터 불러오기 ---
-@st.cache_data(ttl=3600) # 캐시 시간을 1시간으로 늘림
+@st.cache_data(ttl=7200) # 캐시 시간을 2시간으로 늘림
 def load_company_data():
     """Google BigQuery에서 TDS를 불러옵니다."""
     try:
@@ -27,7 +27,7 @@ def load_company_data():
         table_id = "tds_data"   
         table_full_id = f"{project_id}.{dataset_id}.{table_id}"
         
-        # 🚨 중요: 1단계에서 확인한 '데이터 위치'를 여기에 입력하세요.
+        # 🚨 중요: 1단계에서 확인한 '데이터 위치'
         # 예: 서울 -> "asia-northeast3"
         dataset_location = "asia-northeast3" 
 
