@@ -12,50 +12,56 @@ from pandas_gbq import read_gbq
 # --- 초기 설정 및 페이지 구성 ---
 st.set_page_config(layout="wide", page_title="수입 경쟁력 진단 솔루션")
 
-# --- Google BigQuery에서 데이터 불러오기 ---
-@st.cache_data(ttl=7200) # 캐시 시간을 2시간으로 늘림
+# --- Google BigQuery에서 데이터 불러오기 (진단 기능 강화) ---
+@st.cache_data(ttl=7200)
 def load_company_data():
     """Google BigQuery에서 TDS를 불러옵니다."""
     try:
+        st.info("1. Secrets 설정 확인 중...")
         if "gcp_service_account" not in st.secrets:
             st.error("Secrets 설정 오류: [gcp_service_account] 섹션을 찾을 수 없습니다.")
             return pd.DataFrame()
+        st.info("   - Secrets 확인 완료.")
 
-        # BigQuery 테이블 경로 설정
+        st.info("2. Google Cloud 인증 시도 중...")
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
         project_id = st.secrets["gcp_service_account"]["project_id"]
+        st.info(f"   - 인증 정보 로드 성공 (Project ID: {project_id}).")
+        
+        st.info("3. BigQuery 테이블 정보 설정 중...")
         dataset_id = "demo_data" 
         table_id = "tds_data"   
         table_full_id = f"{project_id}.{dataset_id}.{table_id}"
-        
-        # 🚨 중요: 1단계에서 확인한 '데이터 위치'
-        # 예: 서울 -> "asia-northeast3"
         dataset_location = "asia-northeast3" 
+        st.info(f"   - 테이블 경로: {table_full_id}")
+        st.info(f"   - 데이터 위치: {dataset_location}")
 
-        # SQL 쿼리
+        st.info("4. BigQuery에 데이터 쿼리 요청 중... (이 단계에서 멈추면 권한 또는 경로 문제입니다)")
         query = f"SELECT * FROM `{table_full_id}`"
-
-        # 서비스 계정 정보로 인증
-        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
+        st.code(query, language="sql")
         
-        # BigQuery에서 데이터 읽기 (location 파라미터 추가)
         df = read_gbq(query, project_id=project_id, credentials=creds, location=dataset_location)
-        
+        st.info(f"   - 쿼리 성공! {len(df)}개의 행을 불러왔습니다.")
+
+        st.info("5. 데이터 처리 및 정제 중...")
         df.dropna(how="all", inplace=True)
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
         df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce')
         df['Value'] = pd.to_numeric(df['Value'], errors='coerce')
         df.dropna(subset=['Date', 'Volume', 'Value'], inplace=True)
+        st.info("   - 데이터 로딩 및 처리 완료!")
+        
         return df
     except Exception as e:
-        st.error(f"BigQuery 연결 중 오류가 발생했습니다: {e}")
-        st.info("BigQuery 설정(데이터세트/테이블 이름, 위치)과 서비스 계정 권한을 확인해주세요.")
+        st.error(f"데이터 로딩 중 심각한 오류가 발생했습니다:")
+        st.exception(e) # 상세한 오류 내용을 화면에 그대로 출력
+        st.info("BigQuery 설정(데이터세트/테이블 이름, 위치)과 서비스 계정 권한을 다시 확인해주세요.")
         return pd.DataFrame()
 
 OUR_COMPANY_DATA = load_company_data()
 
 # --- 새로운 범용 스마트 매칭 로직 ---
 def clean_text(text):
-    """어떤 제품명이든 통용되는 텍스트 정제 함수"""
     if not isinstance(text, str): return ''
     text = text.lower()
     text = re.sub(r'\(.*?\)', ' ', text)
@@ -66,7 +72,6 @@ def clean_text(text):
 
 # --- 데이터 처리 로직 (개별 제품 분석 지원) ---
 def process_analysis_data(user_input_row, comparison_df, target_importer_name):
-    """하나의 제품 그룹에 대한 분석을 수행합니다."""
     target_df = pd.DataFrame([user_input_row])
     target_df['Date'] = pd.to_datetime(target_df['Date'])
     
@@ -144,7 +149,7 @@ def process_analysis_data(user_input_row, comparison_df, target_importer_name):
 
 # --- UI Components ---
 def login_screen():
-    st.title("� 수입 경쟁력 진단 솔루션")
+    st.title("🔐 수입 경쟁력 진단 솔루션")
     st.write("솔루션 접속을 위해 비밀번호를 입력해주세요.")
     with st.form("login_form", clear_on_submit=True):
         password = st.text_input("비밀번호", type="password")
@@ -158,9 +163,13 @@ def login_screen():
 
 def main_dashboard():
     st.title("📈 수입 경쟁력 진단 솔루션")
-    st.markdown("트릿지 데이터를 기반으로 시장 내 경쟁력을 진단하고 비용 절감 기회를 포착하세요.")
+    
+    # 수정: OUR_COMPANY_DATA 로딩이 끝난 후에만 다음 UI를 표시
+    if OUR_COMPANY_DATA.empty:
+        st.warning("데이터를 불러오는 중이거나 로딩에 실패했습니다. 잠시 후 새로고침해주세요.")
+        return
 
-    if OUR_COMPANY_DATA.empty: return
+    st.markdown("트릿지 데이터를 기반으로 시장 내 경쟁력을 진단하고 비용 절감 기회를 포착하세요.")
 
     with st.expander("STEP 1: 분석 정보 입력", expanded='analysis_groups' not in st.session_state):
         importer_name = st.text_input("1. 귀사의 업체명을 입력해주세요.", key="importer_name").upper()
