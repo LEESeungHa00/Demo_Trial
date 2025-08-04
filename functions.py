@@ -17,7 +17,7 @@ def load_company_data():
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         # 'TDS'는 회사 데이터가 있는 실제 시트 이름입니다.
-        df = conn.read(worksheet="TDS") 
+        df = conn.read(worksheet="TDS")
         df.dropna(how="all", inplace=True)
         # 데이터 타입 변환 (오류 방지)
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
@@ -59,89 +59,76 @@ def smart_match_products(user_product_name, company_product_list):
 def process_analysis_data(target_df, company_df, target_importer_name):
     if company_df.empty or target_df.empty:
         return {}, {}, {}
-        
+
     target_df['Importer'] = target_importer_name.upper()
     all_df = pd.concat([company_df, target_df], ignore_index=True)
     all_df['unitPrice'] = all_df['Value'] / all_df['Volume']
     all_df['year'] = all_df['Date'].dt.year
     all_df['monthYear'] = all_df['Date'].dt.to_period('M').astype(str)
 
-    # 1. 경쟁사 단가 비교 분석
     competitor_analysis = {}
+    yearly_analysis = {}
+    time_series_analysis = {}
+
+    # 1. 경쟁사 단가 비교 분석
     for _, row in target_df.iterrows():
         year = row['Date'].year
         exporter = row['Exporter'].upper()
-        
         key = (year, exporter)
         if key not in competitor_analysis:
             related_trades = all_df[(all_df['year'] == year) & (all_df['Exporter'].str.upper() == exporter)]
             if related_trades.empty: continue
-
             importer_prices = related_trades.groupby('Importer').apply(
                 lambda x: x['Value'].sum() / x['Volume'].sum() if x['Volume'].sum() > 0 else 0
             ).reset_index(name='unitPrice').sort_values('unitPrice')
-
             top5 = importer_prices.head(5)
             target_up = row['Value'] / row['Volume'] if row['Volume'] > 0 else 0
             is_target_in_top5 = target_importer_name.upper() in top5['Importer'].values
-            
             if not is_target_in_top5 and target_up > 0:
                 target_price_df = pd.DataFrame([{'Importer': target_importer_name.upper(), 'unitPrice': target_up}])
                 top5 = pd.concat([top5, target_price_df]).sort_values('unitPrice').head(6)
-            
             competitor_analysis[key] = top5
 
     # 2. 연도별 수입 중량 및 단가 분석
-    yearly_analysis = {}
     for _, row in target_df.iterrows():
         exporter = row['Exporter'].upper()
         origin = row['Origin Country'].upper()
-        
         key = (exporter, origin)
         if key not in yearly_analysis:
             target_unit_price = row['Value'] / row['Volume']
-            
             other_companies = all_df[
-                (all_df['Exporter'].str.upper() == exporter) & 
+                (all_df['Exporter'].str.upper() == exporter) &
                 (all_df['Origin Country'].str.upper() == origin) &
                 (all_df['Importer'].str.upper() != target_importer_name.upper()) &
                 (all_df['unitPrice'] < target_unit_price)
             ]
-            
             saving_info = None
             if not other_companies.empty:
                 avg_unit_price = other_companies['Value'].sum() / other_companies['Volume'].sum()
                 potential_saving = (target_unit_price - avg_unit_price) * row['Volume']
                 saving_info = {'potential_saving': potential_saving}
-
             yearly_data = all_df[(all_df['Exporter'].str.upper() == exporter) & (all_df['Origin Country'].str.upper() == origin)]
             summary = yearly_data.groupby('year').agg(
                 volume=('Volume', 'sum'),
                 value=('Value', 'sum')
             ).reset_index()
             summary['unitPrice'] = summary['value'] / summary['volume']
-            
             yearly_analysis[key] = {'chart_data': summary, 'saving_info': saving_info}
 
     # 3. 시계열 단가 비교 분석
-    time_series_analysis = {}
     for _, row in target_df.iterrows():
         origin = row['Origin Country'].upper()
         if origin not in time_series_analysis:
             related_trades = all_df[all_df['Origin Country'].str.upper() == origin]
-            
             monthly_summary = related_trades.groupby('monthYear').agg(
                 avgPrice=('unitPrice', 'mean'),
                 bestPrice=('unitPrice', 'min')
             ).reset_index()
-
             target_trades = related_trades[related_trades['Importer'].str.upper() == target_importer_name.upper()]
             target_monthly = target_trades.groupby('monthYear').agg(
                 targetPrice=('unitPrice', 'mean')
             ).reset_index()
-
             chart_data = pd.merge(monthly_summary, target_monthly, on='monthYear', how='left').sort_values('monthYear')
-            
             target_unit_price = row['Value'] / row['Volume']
             cheaper_trades = all_df[(all_df['Origin Country'].str.upper() == origin) & (all_df['unitPrice'] < target_unit_price)]
             saving_info = None
@@ -149,7 +136,6 @@ def process_analysis_data(target_df, company_df, target_importer_name):
                 avg_unit_price = cheaper_trades['Value'].sum() / cheaper_trades['Volume'].sum()
                 potential_saving = (target_unit_price - avg_unit_price) * row['Volume']
                 saving_info = {'potential_saving': potential_saving}
-
             time_series_analysis[origin] = {'chart_data': chart_data, 'saving_info': saving_info}
             
     return competitor_analysis, yearly_analysis, time_series_analysis
@@ -225,22 +211,17 @@ def main_dashboard():
                     all_matched_products.update(matched)
                     purchase_data.append(entry)
                 
-                # Google Sheets 저장 로직 (Append-Only)
                 try:
                     conn = st.connection("gsheets", type=GSheetsConnection)
                     save_data_df = pd.DataFrame(purchase_data)
                     save_data_df['importer_name'] = importer_name
                     save_data_df['consent'] = consent
                     save_data_df['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    
-                    # 날짜 형식을 문자열로 변환
                     save_data_df['Date'] = save_data_df['Date'].dt.strftime('%Y-%m-%d')
-
                     worksheet = conn.get_worksheet(worksheet="Customer_input")
-                    if worksheet is None: # 시트가 없는 경우
+                    if worksheet is None:
                         conn.create(worksheet="Customer_input", data=save_data_df)
-                    else: # 시트가 있는 경우
-                        # 헤더가 없으면 헤더를 추가하고, 있으면 데이터만 추가
+                    else:
                         header = worksheet.row_values(1)
                         if not header:
                              worksheet.update([save_data_df.columns.values.tolist()] + save_data_df.values.tolist())
@@ -288,7 +269,7 @@ def main_dashboard():
                         st.markdown(f"**{year}년 / 수출업체: {exporter}**")
                         data['color'] = np.where(data['Importer'] == st.session_state['importer_name_result'].upper(), '#ef4444', '#3b82f6')
                         fig = px.bar(data, x='Importer', y='unitPrice', title=f"{year}년 {exporter} 수입사별 Unit Price", color='color', color_discrete_map={'#ef4444':'귀사', '#3b82f6':'경쟁사'})
-                        fig.update_layout(showlegend=False)
+                        fig.update_layout(showlegend=False, xaxis_title="수입사", yaxis_title="Unit Price (USD/KG)")
                         st.plotly_chart(fig, use_container_width=True)
 
                 st.subheader("2. 연도별 수입 중량 및 Unit Price 트렌드")
@@ -299,7 +280,7 @@ def main_dashboard():
                         fig = go.Figure()
                         fig.add_trace(go.Bar(x=data['chart_data']['year'], y=data['chart_data']['volume'], name='수입 중량 (KG)', yaxis='y1'))
                         fig.add_trace(go.Line(x=data['chart_data']['year'], y=data['chart_data']['unitPrice'], name='Unit Price (USD/KG)', yaxis='y2', mode='lines+markers'))
-                        fig.update_layout(yaxis=dict(title="수입 중량 (KG)"), yaxis2=dict(title="Unit Price (USD/KG)", overlaying='y', side='right'))
+                        fig.update_layout(yaxis=dict(title="수입 중량 (KG)"), yaxis2=dict(title="Unit Price (USD/KG)", overlaying='y', side='right'), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                         st.plotly_chart(fig, use_container_width=True)
                         if data['saving_info']: st.success(f"💰 데이터 기반 예상 절감 가능 금액: 약 ${data['saving_info']['potential_saving']:,.0f}")
 
@@ -308,7 +289,7 @@ def main_dashboard():
                 for origin, data in timeseries_res.items():
                     with st.container(border=True):
                         st.markdown(f"**{origin} 원산지 품목 Unit Price 트렌드**")
-                        fig = px.line(data['chart_data'], x='monthYear', y=['avgPrice', 'targetPrice', 'bestPrice'], markers=True)
+                        fig = px.line(data['chart_data'], x='monthYear', y=['avgPrice', 'targetPrice', 'bestPrice'], markers=True, labels={'monthYear': '월', 'value': 'Unit Price (USD/KG)'})
                         new_names = {'avgPrice':'시장 평균가', 'targetPrice':'귀사 평균가', 'bestPrice':'시장 최저가'}
                         fig.for_each_trace(lambda t: t.update(name = new_names[t.name]))
                         st.plotly_chart(fig, use_container_width=True)
