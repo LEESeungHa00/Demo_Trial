@@ -22,9 +22,14 @@ def load_company_data():
             st.info("`secrets.toml` 파일이 올바른 형식으로 작성되었는지, 가이드를 참고하여 다시 확인해주세요.")
             return pd.DataFrame()
 
+        # 수정: 필요한 모든 권한(scope)을 명시적으로 요청합니다.
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
         creds = Credentials.from_service_account_info(
-            st.secrets["gcp_service_account"], # 수정된 부분: gcp_service_account 섹션에서 정보 로드
-            scopes=["https://www.googleapis.com/auth/spreadsheets"],
+            st.secrets["gcp_service_account"],
+            scopes=scopes,
         )
         client = gspread.authorize(creds)
         
@@ -166,7 +171,8 @@ def process_analysis_data(target_df, company_df, target_importer_name):
 def login_screen():
     st.title("🔐 수입 경쟁력 진단 솔루션")
     st.write("솔루션 접속을 위해 비밀번호를 입력해주세요.")
-    with st.form("login_form"):
+    # 수정: key='login_form' 제거
+    with st.form("login_form", clear_on_submit=True):
         password = st.text_input("비밀번호", type="password")
         submitted = st.form_submit_button("접속하기")
         if submitted:
@@ -234,9 +240,14 @@ def main_dashboard():
                     purchase_data.append(entry)
                 
                 try:
+                    # 수정: 필요한 모든 권한(scope)을 명시적으로 요청합니다.
+                    scopes = [
+                        "https://www.googleapis.com/auth/spreadsheets",
+                        "https://www.googleapis.com/auth/drive"
+                    ]
                     creds = Credentials.from_service_account_info(
                         st.secrets["gcp_service_account"],
-                        scopes=["https://www.googleapis.com/auth/spreadsheets"],
+                        scopes=scopes,
                     )
                     client = gspread.authorize(creds)
                     spreadsheet = client.open("DEMO_app_DB")
