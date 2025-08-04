@@ -13,7 +13,7 @@ from pandas_gbq import read_gbq
 st.set_page_config(layout="wide", page_title="수입 경쟁력 진단 솔루션")
 
 # --- Google BigQuery에서 데이터 불러오기 ---
-@st.cache_data(ttl=7200) # 캐시 시간을 2시간으로 늘림
+@st.cache_data(ttl=7300) # 캐시 시간을 2시간으로 늘림
 def load_company_data():
     """Google BigQuery에서 TDS를 불러옵니다."""
     try:
