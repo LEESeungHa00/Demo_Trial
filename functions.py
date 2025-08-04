@@ -14,7 +14,7 @@ st.set_page_config(layout="wide", page_title="수입 경쟁력 진단 솔루션"
 # --- Google Sheets에서 데이터 불러오기 ---
 @st.cache_data(ttl=600)
 def load_company_data():
-    """Google Sheets에서 회사 데이터를 불러옵니다."""
+    """Google Sheets에서 TDS를 불러옵니다."""
     try:
         if "gcp_service_account" not in st.secrets:
             st.error("Secrets 설정 오류: [gcp_service_account] 섹션을 찾을 수 없습니다.")
@@ -215,7 +215,7 @@ def main_dashboard():
                         "selected_products": sorted(matched_df['Reported Product Name'].unique().tolist())
                     })
 
-                # 수정: Google Sheets 저장 로직 안정성 강화
+                # 수정: Google Sheets 저장 로직 안정성 강화 및 상세 오류 출력
                 try:
                     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
                     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
@@ -233,15 +233,17 @@ def main_dashboard():
                     save_data_df['timestamp'] = datetime.now().strftime("%Y-%m-%d")
                     save_data_df['Date'] = save_data_df['Date'].dt.strftime('%Y-%m-%d')
                     
-                    # 시트가 비어있으면 헤더 추가
                     if not worksheet.get('A1'):
                         worksheet.update([save_data_df.columns.values.tolist()] + save_data_df.values.tolist(), value_input_option='USER_ENTERED')
-                    else: # 비어있지 않으면 데이터만 추가
+                    else:
                         worksheet.append_rows(save_data_df.values.tolist(), value_input_option='USER_ENTERED')
 
                     st.toast("입력 정보가 Google Sheet에 저장되었습니다.", icon="✅")
+                except gspread.exceptions.APIError as e:
+                    st.error("Google Sheets API 오류로 저장에 실패했습니다.")
+                    st.json(e.response.json()) # Google이 보낸 실제 오류 메시지를 출력
                 except Exception as e:
-                    st.error(f"Google Sheets 저장 실패: {e}")
+                    st.error(f"Google Sheets 저장 중 예상치 못한 오류가 발생했습니다: {e}")
 
                 st.session_state['importer_name_result'] = importer_name
                 st.session_state['analysis_groups'] = analysis_groups
@@ -329,3 +331,18 @@ def main_dashboard():
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 if st.session_state['logged_in']: main_dashboard()
 else: login_screen()
+```
+
+---
+
+### 2. 문제 진단 (사용자 확인 필요)
+
+코드를 업데이트하고 앱을 재부팅한 후, **다시 한번 '분석하기' 버튼을 눌러주세요.**
+
+이제 저장에 실패하면, 아래와 같이 **자세한 오류 내용**이 빨간색 박스 안에 나타날 것입니다.
+
+**예시:**
+> Google Sheets API 오류로 저장에 실패했습니다.
+> `{"error": {"code": 403, "message": "The caller does not have permission", "status": "PERMISSION_DENIED"}}`
+
+이 메시지를 저에게 알려주시면, 정확한 원인을 파악하고 최종 해결책을 제시해 드릴 수 있습
