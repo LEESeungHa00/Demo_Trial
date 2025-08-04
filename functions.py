@@ -215,7 +215,6 @@ def main_dashboard():
                         "selected_products": sorted(matched_df['Reported Product Name'].unique().tolist())
                     })
 
-                # 수정: Google Sheets 저장 로직 안정성 강화 및 상세 오류 출력
                 try:
                     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
                     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
@@ -231,7 +230,8 @@ def main_dashboard():
                     save_data_df['importer_name'] = importer_name
                     save_data_df['consent'] = consent
                     save_data_df['timestamp'] = datetime.now().strftime("%Y-%m-%d")
-                    save_data_df['Date'] = save_data_df['Date'].dt.strftime('%Y-%m-%d')
+                    # 수정: .dt 접근자 사용 전에 datetime으로 변환
+                    save_data_df['Date'] = pd.to_datetime(save_data_df['Date']).dt.strftime('%Y-%m-%d')
                     
                     if not worksheet.get('A1'):
                         worksheet.update([save_data_df.columns.values.tolist()] + save_data_df.values.tolist(), value_input_option='USER_ENTERED')
@@ -241,7 +241,7 @@ def main_dashboard():
                     st.toast("입력 정보가 Google Sheet에 저장되었습니다.", icon="✅")
                 except gspread.exceptions.APIError as e:
                     st.error("Google Sheets API 오류로 저장에 실패했습니다.")
-                    st.json(e.response.json()) # Google이 보낸 실제 오류 메시지를 출력
+                    st.json(e.response.json())
                 except Exception as e:
                     st.error(f"Google Sheets 저장 중 예상치 못한 오류가 발생했습니다: {e}")
 
