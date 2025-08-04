@@ -21,11 +21,15 @@ def load_company_data():
             st.error("Secrets 설정 오류: [gcp_service_account] 섹션을 찾을 수 없습니다.")
             return pd.DataFrame()
 
-        # BigQuery 테이블 경로 설정 (사용자 환경에 맞게 수정 필요)
+        # BigQuery 테이블 경로 설정
         project_id = st.secrets["gcp_service_account"]["project_id"]
-        dataset_id = "demo_data" # BigQuery 설정 가이드에서 만든 데이터세트 ID
-        table_id = "tds_data"   # BigQuery 설정 가이드에서 만든 테이블 ID
+        dataset_id = "demo_data" 
+        table_id = "tds_data"   
         table_full_id = f"{project_id}.{dataset_id}.{table_id}"
+        
+        # 🚨 중요: 1단계에서 확인한 '데이터 위치'를 여기에 입력하세요.
+        # 예: 서울 -> "asia-northeast3"
+        dataset_location = "asia-northeast3" 
 
         # SQL 쿼리
         query = f"SELECT * FROM `{table_full_id}`"
@@ -33,8 +37,8 @@ def load_company_data():
         # 서비스 계정 정보로 인증
         creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
         
-        # BigQuery에서 데이터 읽기
-        df = read_gbq(query, project_id=project_id, credentials=creds)
+        # BigQuery에서 데이터 읽기 (location 파라미터 추가)
+        df = read_gbq(query, project_id=project_id, credentials=creds, location=dataset_location)
         
         df.dropna(how="all", inplace=True)
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
@@ -44,7 +48,7 @@ def load_company_data():
         return df
     except Exception as e:
         st.error(f"BigQuery 연결 중 오류가 발생했습니다: {e}")
-        st.info("BigQuery 설정(데이터세트/테이블 이름)과 서비스 계정 권한을 확인해주세요.")
+        st.info("BigQuery 설정(데이터세트/테이블 이름, 위치)과 서비스 계정 권한을 확인해주세요.")
         return pd.DataFrame()
 
 OUR_COMPANY_DATA = load_company_data()
@@ -140,7 +144,7 @@ def process_analysis_data(user_input_row, comparison_df, target_importer_name):
 
 # --- UI Components ---
 def login_screen():
-    st.title("🔐 수입 경쟁력 진단 솔루션")
+    st.title("� 수입 경쟁력 진단 솔루션")
     st.write("솔루션 접속을 위해 비밀번호를 입력해주세요.")
     with st.form("login_form", clear_on_submit=True):
         password = st.text_input("비밀번호", type="password")
