@@ -43,14 +43,10 @@ def clean_text(text):
     """어떤 제품명이든 통용되는 텍스트 정제 함수"""
     if not isinstance(text, str): return ''
     text = text.lower()
-    # 괄호 안 내용, [대괄호] 안 내용 제거
     text = re.sub(r'\(.*?\)', ' ', text)
     text = re.sub(r'\[.*?\]', ' ', text)
-    # N년, Nyo, Nyears 등을 숫자로 통일
     text = re.sub(r'(\d+)\s*(?:y|yo|year|years|old|년)', r'\1', text)
-    # 특수 기호(예: __)를 공백으로 변환
     text = re.sub(r'[^a-z0-9\s\uac00-\ud7a3]', ' ', text)
-    # 여러 공백을 하나로 축소
     return ' '.join(text.split())
 
 # --- 데이터 처리 로직 (개별 제품 분석 지원) ---
@@ -64,11 +60,10 @@ def process_analysis_data(user_input_row, comparison_df, target_importer_name):
 
     target_df['Importer'] = target_importer_name.upper()
     all_df = pd.concat([comparison_df, target_df], ignore_index=True)
-    # 데이터 타입 일관성 유지
     all_df['Value'] = pd.to_numeric(all_df['Value'], errors='coerce')
     all_df['Volume'] = pd.to_numeric(all_df['Volume'], errors='coerce')
     all_df.dropna(subset=['Value', 'Volume'], inplace=True)
-    all_df = all_df[all_df['Volume'] > 0] # 0으로 나누는 오류 방지
+    all_df = all_df[all_df['Volume'] > 0]
 
     all_df['unitPrice'] = all_df['Value'] / all_df['Volume']
     all_df['year'] = all_df['Date'].dt.year
@@ -79,22 +74,23 @@ def process_analysis_data(user_input_row, comparison_df, target_importer_name):
     time_series_analysis = {}
 
     for _, row in target_df.iterrows():
-        # 1. 경쟁사 단가 비교 분석
+        # 1. 경쟁사 단가 비교 분석 (박스 플롯용 데이터 생성)
         year = row['Date'].year
         exporter = row['Exporter'].upper()
         key = (year, exporter)
         related_trades = all_df[(all_df['year'] == year) & (all_df['Exporter'].str.upper() == exporter)]
         if not related_trades.empty:
-            importer_prices = related_trades.groupby('Importer').apply(
-                lambda x: x['Value'].sum() / x['Volume'].sum() if x['Volume'].sum() > 0 else 0
-            ).reset_index(name='unitPrice').sort_values('unitPrice')
-            top5 = importer_prices.head(5)
-            target_up = row['Value'] / row['Volume'] if row['Volume'] > 0 else 0
-            is_target_in_top5 = target_importer_name.upper() in top5['Importer'].values
-            if not is_target_in_top5 and target_up > 0:
-                target_price_df = pd.DataFrame([{'Importer': target_importer_name.upper(), 'unitPrice': target_up}])
-                top5 = pd.concat([top5, target_price_df]).sort_values('unitPrice').head(6)
-            competitor_analysis[key] = top5
+            importer_median_prices = related_trades.groupby('Importer')['unitPrice'].median().sort_values().reset_index()
+            top5_importers = importer_median_prices.head(5)['Importer'].tolist()
+            
+            selected_importers = top5_importers
+            target_importer_name_upper = target_importer_name.upper()
+            if target_importer_name_upper not in selected_importers:
+                if target_importer_name_upper in related_trades['Importer'].unique():
+                     selected_importers.append(target_importer_name_upper)
+
+            box_plot_data = related_trades[related_trades['Importer'].isin(selected_importers)]
+            competitor_analysis[key] = box_plot_data
         
         # 2. 연도별 수입 중량 및 단가 분석
         origin = row['Origin Country'].upper()
@@ -231,7 +227,8 @@ def main_dashboard():
                     save_data_df = pd.DataFrame(all_purchase_data)
                     save_data_df['importer_name'] = importer_name
                     save_data_df['consent'] = consent
-                    save_data_df['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    # 수정: 시간 정보 제거
+                    save_data_df['timestamp'] = datetime.now().strftime("%Y-%m-%d")
                     save_data_df['Date'] = save_data_df['Date'].dt.strftime('%Y-%m-%d')
                     worksheet.append_rows(save_data_df.values.tolist(), value_input_option='USER_ENTERED')
                     st.toast("입력 정보가 Google Sheet에 저장되었습니다.", icon="✅")
@@ -280,9 +277,10 @@ def main_dashboard():
                     with st.container(border=True):
                         st.markdown(f"**{year}년 / 수출업체: {exporter}**")
                         data['구분'] = np.where(data['Importer'] == st.session_state['importer_name_result'].upper(), '귀사', '경쟁사')
-                        fig = px.bar(data, x='Importer', y='unitPrice', title=f"경쟁사 Unit Price 비교",
+                        fig = px.box(data, x='Importer', y='unitPrice', title=f"경쟁사 Unit Price 분포 비교",
                                      color='구분',
-                                     color_discrete_map={'귀사': '#ef4444', '경쟁사': '#3b82f6'})
+                                     color_discrete_map={'귀사': '#ef4444', '경쟁사': '#3b82f6'},
+                                     points='all')
                         fig.update_layout(legend_title_text=None, xaxis_title="수입사", yaxis_title="Unit Price (USD/KG)")
                         st.plotly_chart(fig, use_container_width=True)
 
@@ -300,7 +298,8 @@ def main_dashboard():
                         st.plotly_chart(fig, use_container_width=True)
                         if data['saving_info']: st.success(f"💰 데이터 기반 예상 절감 가능 금액: 약 ${data['saving_info']['potential_saving']:,.0f}")
 
-            st.markdown("#### 3. 시계열 Unit Price 비교")
+            # 수정: 차트 제목 변경
+            st.markdown(f"#### 3. \"{group['user_input']['Reported Product Name']}\" 수입 추이")
             if not timeseries_res:
                 st.write("분석할 시계열 데이터가 없습니다.")
             else:
