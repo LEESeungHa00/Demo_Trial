@@ -329,14 +329,3 @@ def main_dashboard():
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 if st.session_state['logged_in']: main_dashboard()
 else: login_screen()
-```
-
----
-
-### 2. Google Sheets 권한 확인 (사용자 확인 필요)
-
-코드를 업데이트하신 후에도 저장이 안 된다면, Google Sheets의 공유 설정을 다시 한번 확인해주세요.
-
-1.  `DEMO_app_DB` 시트 우측 상단의 **'공유'** 버튼을 클릭합니다.
-2.  서비스 계정 이메일(예: `...iam.gserviceaccount.com`)을 찾습니다.
-3.  계정 옆의 역할이 **'뷰어'가 아닌 '편집자'**로 되어 있는지 반드시 확인합니다. '뷰어'라면 '편집자'로 변경하고 저장해주
