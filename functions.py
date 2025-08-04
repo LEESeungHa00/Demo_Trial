@@ -16,15 +16,14 @@ st.set_page_config(layout="wide", page_title="수입 경쟁력 진단 솔루션"
 def load_company_data():
     """Google Sheets에서 회사 데이터를 불러옵니다."""
     try:
-        # Secrets에 필수 키가 모두 있는지 확인
-        required_keys = ["project_id", "private_key", "client_email", "token_uri"]
-        if not all(key in st.secrets for key in required_keys):
-            st.error("Secrets 설정 오류: 필수 인증 정보가 누락되었습니다.")
+        # Secrets에 [gcp_service_account] 섹션이 있는지 확인
+        if "gcp_service_account" not in st.secrets:
+            st.error("Secrets 설정 오류: [gcp_service_account] 섹션을 찾을 수 없습니다.")
             st.info("`secrets.toml` 파일이 올바른 형식으로 작성되었는지, 가이드를 참고하여 다시 확인해주세요.")
             return pd.DataFrame()
 
         creds = Credentials.from_service_account_info(
-            st.secrets.to_dict(), # .to_dict()로 안전하게 변환
+            st.secrets["gcp_service_account"], # 수정된 부분: gcp_service_account 섹션에서 정보 로드
             scopes=["https://www.googleapis.com/auth/spreadsheets"],
         )
         client = gspread.authorize(creds)
@@ -236,7 +235,7 @@ def main_dashboard():
                 
                 try:
                     creds = Credentials.from_service_account_info(
-                        st.secrets.to_dict(),
+                        st.secrets["gcp_service_account"],
                         scopes=["https://www.googleapis.com/auth/spreadsheets"],
                     )
                     client = gspread.authorize(creds)
@@ -249,7 +248,6 @@ def main_dashboard():
                     save_data_df['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     save_data_df['Date'] = save_data_df['Date'].dt.strftime('%Y-%m-%d')
                     
-                    # 데이터 추가 (append)
                     worksheet.append_rows(save_data_df.values.tolist(), value_input_option='USER_ENTERED')
                     st.toast("입력 정보가 Google Sheet에 저장되었습니다.", icon="✅")
                 except Exception as e:
