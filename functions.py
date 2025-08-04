@@ -74,7 +74,6 @@ def process_analysis_data(user_input_row, comparison_df, target_importer_name):
     time_series_analysis = {}
 
     for _, row in target_df.iterrows():
-        # 1. 경쟁사 단가 비교 분석 (박스 플롯용 데이터 생성)
         year = row['Date'].year
         exporter = row['Exporter'].upper()
         key = (year, exporter)
@@ -92,7 +91,6 @@ def process_analysis_data(user_input_row, comparison_df, target_importer_name):
             box_plot_data = related_trades[related_trades['Importer'].isin(selected_importers)]
             competitor_analysis[key] = box_plot_data
         
-        # 2. 연도별 수입 중량 및 단가 분석
         origin = row['Origin Country'].upper()
         key_yearly = (exporter, origin)
         target_unit_price_yearly = row['Value'] / row['Volume']
@@ -112,7 +110,6 @@ def process_analysis_data(user_input_row, comparison_df, target_importer_name):
         summary['unitPrice'] = summary['value'] / summary['volume']
         yearly_analysis[key_yearly] = {'chart_data': summary, 'saving_info': saving_info_yearly}
 
-        # 3. 시계열 단가 비교 분석
         key_ts = origin
         related_trades_ts = all_df[all_df['Origin Country'].str.upper() == origin]
         monthly_summary = related_trades_ts.groupby('monthYear').agg(avgPrice=('unitPrice', 'mean'), bestPrice=('unitPrice', 'min')).reset_index()
@@ -218,19 +215,30 @@ def main_dashboard():
                         "selected_products": sorted(matched_df['Reported Product Name'].unique().tolist())
                     })
 
+                # 수정: Google Sheets 저장 로직 안정성 강화
                 try:
                     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
                     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
                     client = gspread.authorize(creds)
                     spreadsheet = client.open("DEMO_app_DB")
-                    worksheet = spreadsheet.worksheet("Customer_input")
+                    
+                    try:
+                        worksheet = spreadsheet.worksheet("Customer_input")
+                    except gspread.exceptions.WorksheetNotFound:
+                        worksheet = spreadsheet.add_worksheet(title="Customer_input", rows=1, cols=20)
+
                     save_data_df = pd.DataFrame(all_purchase_data)
                     save_data_df['importer_name'] = importer_name
                     save_data_df['consent'] = consent
-                    # 수정: 시간 정보 제거
                     save_data_df['timestamp'] = datetime.now().strftime("%Y-%m-%d")
                     save_data_df['Date'] = save_data_df['Date'].dt.strftime('%Y-%m-%d')
-                    worksheet.append_rows(save_data_df.values.tolist(), value_input_option='USER_ENTERED')
+                    
+                    # 시트가 비어있으면 헤더 추가
+                    if not worksheet.get('A1'):
+                        worksheet.update([save_data_df.columns.values.tolist()] + save_data_df.values.tolist(), value_input_option='USER_ENTERED')
+                    else: # 비어있지 않으면 데이터만 추가
+                        worksheet.append_rows(save_data_df.values.tolist(), value_input_option='USER_ENTERED')
+
                     st.toast("입력 정보가 Google Sheet에 저장되었습니다.", icon="✅")
                 except Exception as e:
                     st.error(f"Google Sheets 저장 실패: {e}")
@@ -298,7 +306,6 @@ def main_dashboard():
                         st.plotly_chart(fig, use_container_width=True)
                         if data['saving_info']: st.success(f"💰 데이터 기반 예상 절감 가능 금액: 약 ${data['saving_info']['potential_saving']:,.0f}")
 
-            # 수정: 차트 제목 변경
             st.markdown(f"#### 3. \"{group['user_input']['Reported Product Name']}\" 수입 추이")
             if not timeseries_res:
                 st.write("분석할 시계열 데이터가 없습니다.")
@@ -322,3 +329,14 @@ def main_dashboard():
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 if st.session_state['logged_in']: main_dashboard()
 else: login_screen()
+```
+
+---
+
+### 2. Google Sheets 권한 확인 (사용자 확인 필요)
+
+코드를 업데이트하신 후에도 저장이 안 된다면, Google Sheets의 공유 설정을 다시 한번 확인해주세요.
+
+1.  `DEMO_app_DB` 시트 우측 상단의 **'공유'** 버튼을 클릭합니다.
+2.  서비스 계정 이메일(예: `...iam.gserviceaccount.com`)을 찾습니다.
+3.  계정 옆의 역할이 **'뷰어'가 아닌 '편집자'**로 되어 있는지 반드시 확인합니다. '뷰어'라면 '편집자'로 변경하고 저장해주
