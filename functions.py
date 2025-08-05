@@ -82,11 +82,18 @@ def create_monthly_frequency_chart(df, title):
 
 # --- 새로운 범용 스마트 매칭 로직 ---
 def clean_text(text):
+    """어떤 제품명이든 통용되는 텍스트 정제 함수"""
     if not isinstance(text, str): return ''
     text = text.lower()
+    # 1. 괄호 및 대괄호 내용 제거
     text = re.sub(r'\(.*?\)|\[.*?\]', ' ', text)
-    text = re.sub(r'(\d+)\s*(?:y|yo|year|years|old|년)', r'\1', text)
+    # 2. '년산', '년' 등 단위 제거 (수정된 핵심 로직)
+    text = re.sub(r'(\d+)\s*(?:y|yo|year|years|old|년산|년)', r'\1', text)
+    # 3. 한글, 영문, 숫자, 공백을 제외한 모든 문자 제거
     text = re.sub(r'[^a-z0-9\s\uac00-\ud7a3]', ' ', text)
+    # 4. 불필요한 단어 제거 (예: 단독으로 남은 '산')
+    text = re.sub(r'\b산\b', ' ', text)
+    # 5. 여러 공백을 하나로 축소
     return ' '.join(text.split())
 
 # --- 메인 분석 로직 ---
@@ -219,7 +226,6 @@ def main_dashboard(company_data):
                         return
                     all_purchase_data.append(entry)
                 
-                # 중복 제품 합산 로직
                 purchase_df = pd.DataFrame(all_purchase_data)
                 agg_funcs = {'Volume': 'sum', 'Value': 'sum', 'Date': 'first', 'HS-CODE': 'first', 'Origin Country': 'first', 'Exporter': 'first', 'Incoterms': 'first'}
                 aggregated_purchase_df = purchase_df.groupby('Reported Product Name').agg(agg_funcs).reset_index()
@@ -235,7 +241,7 @@ def main_dashboard(company_data):
                     analysis_groups.append({ "id": i, "user_input": entry, "matched_products": sorted(matched_df['reported_product_name'].unique().tolist()), "selected_products": sorted(matched_df['reported_product_name'].unique().tolist()) })
 
                 try:
-                    scopes = ["https.www.googleapis.com/auth/spreadsheets", "https.www.googleapis.com/auth/drive"]
+                    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
                     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
                     client = gspread.authorize(creds)
                     spreadsheet = client.open("DEMO_app_DB")
@@ -249,7 +255,8 @@ def main_dashboard(company_data):
                     save_data_df['importer_name'] = importer_name
                     save_data_df['consent'] = consent
                     save_data_df['timestamp'] = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
-                    save_data_df['Date'] = pd.to_datetime(save_data_df['Date']).dt.strftime('%Y-%m-%d')
+                    
+                    save_data_df = save_data_df.astype(str)
                     
                     if not worksheet.get('A1'):
                         worksheet.update([save_data_df.columns.values.tolist()] + save_data_df.values.tolist(), value_input_option='USER_ENTERED')
@@ -257,8 +264,12 @@ def main_dashboard(company_data):
                         worksheet.append_rows(save_data_df.values.tolist(), value_input_option='USER_ENTERED')
 
                     st.toast("입력 정보가 Google Sheet에 저장되었습니다.", icon="✅")
+                except gspread.exceptions.APIError as e:
+                    st.error("Google Sheets API 오류로 저장에 실패했습니다.")
+                    st.json(e.response.json())
                 except Exception as e:
-                    st.error(f"Google Sheets 저장 중 예상치 못한 오류가 발생했습니다: {e}")
+                    st.error(f"Google Sheets 저장 중 예상치 못한 오류가 발생했습니다:")
+                    st.exception(e)
 
                 st.session_state['importer_name_result'] = importer_name
                 st.session_state['analysis_groups'] = analysis_groups
@@ -315,7 +326,6 @@ def main_dashboard(company_data):
                                         labels={'Total_Volume': '수입 총 중량 (KG)', 'Avg_UnitPrice': '평균 수입 단가 (USD/KG)'})
                 st.plotly_chart(fig_bubble, use_container_width=True)
 
-                # 수정: 전체 시장의 수입 빈도를 표시하도록 변경
                 st.markdown("##### 지난 12개월간 월별 수입 빈도")
                 hscode_for_freq = group['user_input']['HS-CODE']
                 if hscode_for_freq:
