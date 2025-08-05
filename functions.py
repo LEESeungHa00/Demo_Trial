@@ -235,8 +235,28 @@ def main_dashboard(company_data):
                     analysis_groups.append({ "id": i, "user_input": entry, "matched_products": sorted(matched_df['reported_product_name'].unique().tolist()), "selected_products": sorted(matched_df['reported_product_name'].unique().tolist()) })
 
                 try:
-                    # ... (Google Sheets 저장 로직) ...
-                    pass
+                    scopes = ["https.www.googleapis.com/auth/spreadsheets", "https.www.googleapis.com/auth/drive"]
+                    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+                    client = gspread.authorize(creds)
+                    spreadsheet = client.open("DEMO_app_DB")
+                    
+                    try:
+                        worksheet = spreadsheet.worksheet("Customer_input")
+                    except gspread.exceptions.WorksheetNotFound:
+                        worksheet = spreadsheet.add_worksheet(title="Customer_input", rows=1, cols=20)
+
+                    save_data_df = pd.DataFrame(all_purchase_data)
+                    save_data_df['importer_name'] = importer_name
+                    save_data_df['consent'] = consent
+                    save_data_df['timestamp'] = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
+                    save_data_df['Date'] = pd.to_datetime(save_data_df['Date']).dt.strftime('%Y-%m-%d')
+                    
+                    if not worksheet.get('A1'):
+                        worksheet.update([save_data_df.columns.values.tolist()] + save_data_df.values.tolist(), value_input_option='USER_ENTERED')
+                    else:
+                        worksheet.append_rows(save_data_df.values.tolist(), value_input_option='USER_ENTERED')
+
+                    st.toast("입력 정보가 Google Sheet에 저장되었습니다.", icon="✅")
                 except Exception as e:
                     st.error(f"Google Sheets 저장 중 예상치 못한 오류가 발생했습니다: {e}")
 
@@ -295,11 +315,18 @@ def main_dashboard(company_data):
                                         labels={'Total_Volume': '수입 총 중량 (KG)', 'Avg_UnitPrice': '평균 수입 단가 (USD/KG)'})
                 st.plotly_chart(fig_bubble, use_container_width=True)
 
+                # 수정: 전체 시장의 수입 빈도를 표시하도록 변경
                 st.markdown("##### 지난 12개월간 월별 수입 빈도")
-                target_df = company_data[company_data['importer'] == st.session_state['importer_name_result']]
-                fig_target_freq = create_monthly_frequency_chart(target_df, "귀사")
-                if fig_target_freq: st.plotly_chart(fig_target_freq, use_container_width=True)
-                else: st.info("귀사의 지난 1년간 수입 데이터가 없습니다.")
+                hscode_for_freq = group['user_input']['HS-CODE']
+                if hscode_for_freq:
+                    hscode_df = company_data[company_data['hs_code'] == hscode_for_freq]
+                    fig_market_freq = create_monthly_frequency_chart(hscode_df, f"HS-Code {hscode_for_freq} 전체 시장 수입 빈도")
+                    if fig_market_freq:
+                        st.plotly_chart(fig_market_freq, use_container_width=True)
+                    else:
+                        st.info(f"HS-Code {hscode_for_freq}에 대한 지난 1년간 수입 데이터가 없습니다.")
+                else:
+                    st.info("HS-Code가 입력되지 않아 수입 빈도 분석을 생략합니다.")
 
             else:
                 st.info("데이터가 부족하여 포지셔닝 분석을 생략합니다.")
