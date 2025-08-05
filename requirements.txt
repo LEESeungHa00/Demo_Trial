@@ -6,4 +6,4 @@ gspread
 google-auth-oauthlib
 google-cloud-bigquery
 pandas-gbq
-sklearn
+scikit-learn
