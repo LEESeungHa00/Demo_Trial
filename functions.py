@@ -228,7 +228,7 @@ def main_dashboard(company_data):
             st.markdown("#### PART 1. 이번 거래 경쟁력 진단 요약")
             if diag_res:
                 price_diff = (diag_res['user_price'] / diag_res['market_avg_price'] - 1) * 100 if diag_res['market_avg_price'] > 0 else 0
-                cols = st.columns(3); cols[0].metric("이번 거래 단가", f"${diag_res['user_price']:.2f}", f"{price_diff:.1f}% vs 동월 평균", delta_color="inverse")
+                cols = st.columns(3); cols[0].metric("이번 거래 단가", f"${diag_res['user_price']:.2f}", f"{price_diff:.1f}% (동월 평균 대비)", delta_color="inverse")
                 cols[1].metric("동월 내 가격 백분위", f"상위 {100-diag_res['percentile']:.0f}%", help="높은 비율일 수록 저렴한 가격입니다.")
                 cols[2].metric("예상 추가 절감액", f"${diag_res['potential_savings']:,.0f}", help=f"동월 상위 10% 평균가(${diag_res['top_10_price']:.2f}) 기준")
             else: st.info("이번 거래와 동일한 월의 시장 데이터가 부족하여 진단 요약을 생성할 수 없습니다.")
@@ -272,7 +272,10 @@ def main_dashboard(company_data):
                 with st.popover("ℹ️"): st.markdown("""**그룹 분류 기준:**\n- **시장 선도 그룹:** 수입 금액 기준 누적 70% 차지\n- **유사 규모 경쟁 그룹:** 귀사 순위 기준 상하 ±10%\n- **최저가 달성 그룹:** 시기 보정된 '가격 경쟁력 지수' 하위 15%""")
             rb_groups = p_res['rule_based_groups']; group_data = []
             for name, df in rb_groups.items():
-                if not df.empty: df['group_name'] = name; group_data.append(df[['group_name', 'price_index']])
+                if not df.empty: 
+                    df_copy = df.copy()
+                    df_copy['group_name'] = name
+                    group_data.append(df_copy[['group_name', 'price_index']])
             if group_data:
                 plot_df_box = pd.concat(group_data)
                 fig_box = px.box(plot_df_box, x='group_name', y='price_index', title="<b>주요 경쟁 그룹별 가격 경쟁력 분포</b>", points='all', labels={'group_name': '경쟁 그룹 유형', 'price_index': '가격 경쟁력 지수'})
