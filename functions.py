@@ -282,91 +282,91 @@ def main_dashboard(company_data):
                     st.session_state['analysis_groups'] = analysis_groups
                     st.success("분석 완료!")
                     st.rerun()
-
-# --- 분석 결과 표시 ---
-if 'analysis_groups' in st.session_state:
-    st.header("📊 분석 결과")
-    for i, group in enumerate(st.session_state.analysis_groups):
-        product_name = group['user_input']['Reported Product Name']
-        st.subheader(f"분석 그룹: \"{product_name}\"")
-        
-        # 분석 결과 데이터 추출
-        result = group['result']
-        p_res = result.get('positioning')
-        s_res = result.get('supply_chain')
-        
-        st.markdown("#### PART 1. 마켓 포지션 분석")
-        if not p_res or p_res['importer_stats'].empty:
-            st.info("포지션 분석을 위한 데이터가 부족합니다.")
-            continue
-
-        # --- 전문가 제안: 사분면 + 강조 버블 차트 ---
-        importer_stats = p_res['importer_stats']
-        target_name = st.session_state.get('importer_name_result', '')
-        
-        # 시각화할 데이터 준비 (Top 5 + 유사그룹 + 귀사)
-        plot_df = pd.concat([
-            importer_stats.head(5), 
-            p_res['rule_based_groups']['Direct Peers'], 
-            p_res['target_stats']
-        ]).drop_duplicates().reset_index(drop=True)
-        
-        # 익명화 및 사이즈/색상 설정
-        plot_df['Anonymized_Importer'] = [f"{chr(ord('A')+j)}사" if imp != target_name else target_name for j, imp in enumerate(plot_df['importer'])]
-        plot_df['size'] = np.log1p(plot_df['total_value']) # 로그 스케일링으로 버블 크기 조절
-        
-        # 귀사 강조를 위한 색상 및 투명도 설정
-        colors = ['#FF4B4B' if imp == target_name else '#BDBDBD' for imp in plot_df['importer']]
-        opacities = [1.0 if imp == target_name else 0.5 for imp in plot_df['importer']]
-        plot_df['color'] = colors
-        plot_df['opacity'] = opacities
-        
-        # 사분면 기준선 (시장 평균) 계산
-        x_mean = importer_stats['total_volume'].mean()
-        y_mean = importer_stats['avg_unitprice'].mean()
-
-        # 차트 생성
-        fig = px.scatter(
-            plot_df, x='total_volume', y='avg_unitprice', size='size',
-            color='color', # 개별 색상 적용
-            opacity=0.8, # 기본 투명도
-            hover_name='Anonymized_Importer',
-            hover_data={'total_volume': ':,', 'avg_unitprice': ':.2f', 'total_value':':,', 'size':False, 'color':False, 'opacity':False},
-            log_x=True, title="수입사 포지셔닝 맵 (시장 전략 분석)"
-        )
-        
-        # 개별 점에 대한 투명도 직접 설정 (px.scatter에서 직접 지원 안하므로 생성 후 변경)
-        for i, o in enumerate(plot_df['opacity']):
-             fig.data[0].marker.color[i] = fig.data[0].marker.color[i].replace('1)', f'{o})').replace('rgb', 'rgba')
-
-
-        # 평균선 추가
-        fig.add_vline(x=x_mean, line_dash="dash", line_color="gray", annotation_text="평균 수입량")
-        fig.add_hline(y=y_mean, line_dash="dash", line_color="gray", annotation_text="평균 단가")
-        
-        # 사분면 텍스트 추가
-        chart_max_x = plot_df['total_volume'].max() * 1.5 # 로그 스케일 감안
-        chart_max_y = plot_df['avg_unitprice'].max() * 1.1
-        
-        fig.add_annotation(x=np.log10(chart_max_x), y=chart_max_y, text="<b>니치/프리미엄 그룹</b>", showarrow=False, xanchor='right', yanchor='top', font=dict(color="grey", size=12))
-        fig.add_annotation(x=np.log10(x_mean*0.95), y=chart_max_y, text="<b>시장 선도 그룹</b>", showarrow=False, xanchor='right', yanchor='top', font=dict(color="grey", size=12))
-        fig.add_annotation(x=np.log10(chart_max_x), y=plot_df['avg_unitprice'].min(), text="<b>소규모/가격 경쟁 그룹</b>", showarrow=False, xanchor='right', yanchor='bottom', font=dict(color="grey", size=12))
-        fig.add_annotation(x=np.log10(x_mean*0.95), y=plot_df['avg_unitprice'].min(), text="<b>대규모/가성비 그룹</b>", showarrow=False, xanchor='right', yanchor='bottom', font=dict(color="grey", size=12))
-
-        # 귀사 위치에 화살표 추가
-        target_row = plot_df[plot_df['importer'] == target_name]
-        if not target_row.empty:
-            target = target_row.iloc[0]
-            fig.add_annotation(
-                x=np.log10(target['total_volume']), y=target['avg_unitprice'],
-                text="<b>귀사 위치</b>", showarrow=True, arrowhead=2, arrowcolor="#FF4B4B",
-                ax=-40, ay=-40, bordercolor="#FF4B4B", borderwidth=2, bgcolor="white"
+    
+    # --- 분석 결과 표시 ---
+    if 'analysis_groups' in st.session_state:
+        st.header("📊 분석 결과")
+        for i, group in enumerate(st.session_state.analysis_groups):
+            product_name = group['user_input']['Reported Product Name']
+            st.subheader(f"분석 그룹: \"{product_name}\"")
+            
+            # 분석 결과 데이터 추출
+            result = group['result']
+            p_res = result.get('positioning')
+            s_res = result.get('supply_chain')
+            
+            st.markdown("#### PART 1. 마켓 포지션 분석")
+            if not p_res or p_res['importer_stats'].empty:
+                st.info("포지션 분석을 위한 데이터가 부족합니다.")
+                continue
+    
+            # --- 전문가 제안: 사분면 + 강조 버블 차트 ---
+            importer_stats = p_res['importer_stats']
+            target_name = st.session_state.get('importer_name_result', '')
+            
+            # 시각화할 데이터 준비 (Top 5 + 유사그룹 + 귀사)
+            plot_df = pd.concat([
+                importer_stats.head(5), 
+                p_res['rule_based_groups']['Direct Peers'], 
+                p_res['target_stats']
+            ]).drop_duplicates().reset_index(drop=True)
+            
+            # 익명화 및 사이즈/색상 설정
+            plot_df['Anonymized_Importer'] = [f"{chr(ord('A')+j)}사" if imp != target_name else target_name for j, imp in enumerate(plot_df['importer'])]
+            plot_df['size'] = np.log1p(plot_df['total_value']) # 로그 스케일링으로 버블 크기 조절
+            
+            # 귀사 강조를 위한 색상 및 투명도 설정
+            colors = ['#FF4B4B' if imp == target_name else '#BDBDBD' for imp in plot_df['importer']]
+            opacities = [1.0 if imp == target_name else 0.5 for imp in plot_df['importer']]
+            plot_df['color'] = colors
+            plot_df['opacity'] = opacities
+            
+            # 사분면 기준선 (시장 평균) 계산
+            x_mean = importer_stats['total_volume'].mean()
+            y_mean = importer_stats['avg_unitprice'].mean()
+    
+            # 차트 생성
+            fig = px.scatter(
+                plot_df, x='total_volume', y='avg_unitprice', size='size',
+                color='color', # 개별 색상 적용
+                opacity=0.8, # 기본 투명도
+                hover_name='Anonymized_Importer',
+                hover_data={'total_volume': ':,', 'avg_unitprice': ':.2f', 'total_value':':,', 'size':False, 'color':False, 'opacity':False},
+                log_x=True, title="수입사 포지셔닝 맵 (시장 전략 분석)"
             )
-
-        fig.update_layout(
-            xaxis_title="총 수입 중량 (KG, Log Scale)", yaxis_title="평균 수입 단가 (USD/KG)",
-            showlegend=False # 범례 숨기기
-        )
+            
+            # 개별 점에 대한 투명도 직접 설정 (px.scatter에서 직접 지원 안하므로 생성 후 변경)
+            for i, o in enumerate(plot_df['opacity']):
+                 fig.data[0].marker.color[i] = fig.data[0].marker.color[i].replace('1)', f'{o})').replace('rgb', 'rgba')
+    
+    
+            # 평균선 추가
+            fig.add_vline(x=x_mean, line_dash="dash", line_color="gray", annotation_text="평균 수입량")
+            fig.add_hline(y=y_mean, line_dash="dash", line_color="gray", annotation_text="평균 단가")
+            
+            # 사분면 텍스트 추가
+            chart_max_x = plot_df['total_volume'].max() * 1.5 # 로그 스케일 감안
+            chart_max_y = plot_df['avg_unitprice'].max() * 1.1
+            
+            fig.add_annotation(x=np.log10(chart_max_x), y=chart_max_y, text="<b>니치/프리미엄 그룹</b>", showarrow=False, xanchor='right', yanchor='top', font=dict(color="grey", size=12))
+            fig.add_annotation(x=np.log10(x_mean*0.95), y=chart_max_y, text="<b>시장 선도 그룹</b>", showarrow=False, xanchor='right', yanchor='top', font=dict(color="grey", size=12))
+            fig.add_annotation(x=np.log10(chart_max_x), y=plot_df['avg_unitprice'].min(), text="<b>소규모/가격 경쟁 그룹</b>", showarrow=False, xanchor='right', yanchor='bottom', font=dict(color="grey", size=12))
+            fig.add_annotation(x=np.log10(x_mean*0.95), y=plot_df['avg_unitprice'].min(), text="<b>대규모/가성비 그룹</b>", showarrow=False, xanchor='right', yanchor='bottom', font=dict(color="grey", size=12))
+    
+            # 귀사 위치에 화살표 추가
+            target_row = plot_df[plot_df['importer'] == target_name]
+            if not target_row.empty:
+                target = target_row.iloc[0]
+                fig.add_annotation(
+                    x=np.log10(target['total_volume']), y=target['avg_unitprice'],
+                    text="<b>귀사 위치</b>", showarrow=True, arrowhead=2, arrowcolor="#FF4B4B",
+                    ax=-40, ay=-40, bordercolor="#FF4B4B", borderwidth=2, bgcolor="white"
+                )
+    
+            fig.update_layout(
+                xaxis_title="총 수입 중량 (KG, Log Scale)", yaxis_title="평균 수입 단가 (USD/KG)",
+                showlegend=False # 범례 숨기기
+            )
         st.plotly_chart(fig, use_container_width=True)
             # 그룹 분류 방식 선택
             st.markdown("##### 경쟁사 그룹 분석")
