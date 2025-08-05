@@ -177,7 +177,40 @@ def main_dashboard(company_data):
             if len(st.session_state.rows) > 1 and cols[8].button("삭제", key=f"delete{key_suffix}"): st.session_state.rows.pop(i); st.rerun()
         if st.button("➕ 내역 추가하기"):
             new_id = max(row['id'] for row in st.session_state.rows) + 1 if st.session_state.rows else 1; st.session_state.rows.append({'id': new_id}); st.rerun()
-        st.mark감)")
+        st.markdown("---")
+        consent = st.checkbox("정보 활용 동의", value=st.session_state.get('consent', True), key='consent_widget'); st.session_state['consent'] = consent
+        if st.button("분석하기", type="primary", use_container_width=True):
+            all_input_data = []; is_valid = True
+            if not importer_name: st.error("⚠️ [입력 오류] 귀사의 업체명을 입력해주세요."); is_valid = False
+            if not consent: st.warning("⚠️ 정보 활용 동의에 체크해주세요."); is_valid = False
+            for i, row in enumerate(st.session_state.rows):
+                key_suffix = f"_{row['id']}"; entry = { "Date": st.session_state.get(f'date{key_suffix}'), "Reported Product Name": st.session_state.get(f'product_name{key_suffix}'), "HS-Code": st.session_state.get(f'hscode{key_suffix}'), "Origin Country": st.session_state.get(f'origin{key_suffix}'), "Exporter": st.session_state.get(f'exporter{key_suffix}'), "Volume": st.session_state.get(f'volume{key_suffix}'), "Value": st.session_state.get(f'value{key_suffix}'), "Incoterms": st.session_state.get(f'incoterms{key_suffix}')}
+                all_input_data.append(entry)
+                if not all([entry['Reported Product Name'], entry['HS-Code'], entry['Origin Country'], entry['Exporter']]): st.error(f"⚠️ [입력 오류] {i+1}번째 줄의 필수 항목을 모두 입력해주세요."); is_valid = False
+            if is_valid:
+                with st.spinner('입력 데이터를 저장하고 분석을 시작합니다...'):
+                    purchase_df = pd.DataFrame(all_input_data)
+                    if save_to_google_sheets(purchase_df, importer_name, consent):
+                        purchase_df['cleaned_name'] = purchase_df['Reported Product Name'].apply(clean_text)
+                        agg_funcs = {'Volume': 'sum', 'Value': 'sum', 'Reported Product Name': 'first', 'HS-Code': 'first', 'Exporter': 'first', 'Date':'first', 'Origin Country':'first', 'Incoterms':'first'}
+                        aggregated_purchase_df = purchase_df.groupby('cleaned_name', as_index=False).agg(agg_funcs)
+                        analysis_groups = []
+                        company_data['cleaned_name'] = company_data['reported_product_name'].apply(clean_text)
+                        for _, row in aggregated_purchase_df.iterrows():
+                            entry = row.to_dict(); user_tokens = set(entry['cleaned_name'].split()); is_match = lambda name: user_tokens.issubset(set(str(name).split())); matched_df = company_data[company_data['cleaned_name'].apply(is_match)]; matched_products = sorted(matched_df['reported_product_name'].unique().tolist()); result = run_all_analysis([entry], company_data, matched_products, importer_name)
+                            analysis_groups.append({"user_input": entry, "matched_products": matched_products, "selected_products": matched_products, "result": result})
+                        st.session_state['importer_name_result'] = importer_name; st.session_state['analysis_groups'] = analysis_groups
+                        st.success("분석 완료!"); st.rerun()
+    
+    if 'analysis_groups' in st.session_state:
+        st.header("📊 분석 결과")
+        
+        # --- Overview UI (복원) ---
+        processed_hscodes = []
+        for group in st.session_state.analysis_groups:
+            overview_res = group['result'].get('overview')
+            if overview_res and overview_res['hscode'] not in processed_hscodes:
+                st.subheader(f"📈 HS-Code {overview_res['hscode']} 시장 개요 및 전년 대비 증감율")
                 o = overview_res; cols = st.columns(3)
                 vol_yoy = (o['vol_this_year'] - o['vol_last_year']) / o['vol_last_year'] if o['vol_last_year'] > 0 else np.nan
                 price_yoy = (o['price_this_year'] - o['price_last_year']) / o['price_last_year'] if o['price_last_year'] > 0 else np.nan
