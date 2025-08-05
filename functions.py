@@ -15,10 +15,10 @@ from zoneinfo import ZoneInfo
 st.set_page_config(layout="wide", page_title="수입 경쟁력 진단 솔루션")
 
 # --- API 사용 범위(Scope) 정의 ---
-# "이 서비스 계정으로 아래 API들을 사용하겠습니다"라고 명시적으로 선언하는 부분입니다.
+# "이 서비스 계정으로 아래 API들을 사용하겠습니다"라고 명시적으로 선언합니다.
 SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets',
-    'https://www.googleapis.com/auth/drive.file',
+    'https://www.googleapis.com/auth/drive',
     'https://www.googleapis.com/auth/bigquery'
 ]
 
@@ -28,14 +28,11 @@ def load_company_data():
     """Google BigQuery에서 데이터를 불러오고 기본 전처리를 수행합니다."""
     try:
         # 인증 정보에 SCOPES를 포함하여 Credentials 객체 생성
-        creds_dict = st.secrets["gcp_service_account"]
-        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-        
-        project_id = creds_dict["project_id"]
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
+        project_id = st.secrets["gcp_service_account"]["project_id"]
         table_full_id = f"{project_id}.demo_data.tds_data"
         df = read_gbq(f"SELECT * FROM `{table_full_id}`", project_id=project_id, credentials=creds)
         
-        # --- 이하 데이터 처리 로직은 동일 ---
         df.columns = [re.sub(r'[^a-z0-9]+', '_', col.lower().strip()) for col in df.columns]
         df['date'] = pd.to_datetime(df['date'], errors='coerce')
         for col in ['volume', 'value']:
@@ -49,32 +46,50 @@ def load_company_data():
         return df
     except Exception as e: st.error(f"데이터 로딩 중 오류: {e}"); return None
 
-# --- Google Sheets 저장 ---
+# --- Google Sheets 저장 (사용자 제공 로직 기반으로 전면 교체) ---
 def save_to_google_sheets(purchase_df, importer_name, consent):
     """사용자 입력 데이터프레임을 지정된 구글 시트에 저장합니다."""
     try:
-        # 인증 정보에 SCOPES를 포함하여 Credentials 객체 생성
-        creds_dict = st.secrets["gcp_service_account"]
-        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
         client = gspread.authorize(creds)
-
-        spreadsheet_name = st.secrets.get("google_sheets", {}).get("spreadsheet_name", "DEMO_app_DB")
+        spreadsheet = client.open(st.secrets.get("google_sheets", {}).get("spreadsheet_name", "DEMO_app_DB"))
         worksheet_name = st.secrets.get("google_sheets", {}).get("worksheet_name", "Customer_input")
-        sheet = client.open(spreadsheet_name).worksheet(worksheet_name)
-        
-        header = ["Date", "Reported Product Name", "HS-Code", "Export Country", "Exporter", "Volume(KG)", "Value(USD)", "Incoterms", "Importer", "IS_Agreed", "Input_time"]
-        if not sheet.get_all_values(): sheet.append_row(header)
-        
-        rows_to_append = []
-        for _, row in purchase_df.iterrows():
-            new_row = [row["Date"].strftime('%Y-%m-%d'), row["Reported Product Name"], row["HS-Code"], row["Origin Country"], row["Exporter"].upper(), row["Volume"], row["Value"], row["Incoterms"], importer_name, consent, datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S')]
-            rows_to_append.append(new_row)
-        
-        if rows_to_append: sheet.append_rows(rows_to_append, value_input_option='USER_ENTERED')
-        return True
-    except Exception as e: st.error(f"Google Sheets 저장 중 오류: {e}"); return False
 
-# --- 이하 모든 분석 및 UI 코드는 이전과 동일하게 유지됩니다 ---
+        try:
+            worksheet = spreadsheet.worksheet(worksheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=1, cols=20)
+
+        save_data_df = purchase_df.copy()
+        save_data_df['importer_name'] = importer_name
+        save_data_df['consent'] = consent
+        save_data_df['timestamp'] = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
+        
+        # 날짜 포맷팅 및 전체 문자열 변환
+        save_data_df['Date'] = save_data_df['Date'].dt.strftime('%Y-%m-%d')
+        save_data_df = save_data_df.astype(str)
+        
+        # 헤더 순서 정렬
+        final_columns = ["Date", "Reported Product Name", "HS-Code", "Origin Country", "Exporter", "Volume", "Value", "Incoterms", "importer_name", "consent", "timestamp"]
+        save_data_df = save_data_df[final_columns]
+        
+        if not worksheet.get('A1'):
+            worksheet.update([save_data_df.columns.values.tolist()] + save_data_df.values.tolist(), value_input_option='USER_ENTERED')
+        else:
+            worksheet.append_rows(save_data_df.values.tolist(), value_input_option='USER_ENTERED')
+
+        st.toast("입력 정보가 Google Sheet에 저장되었습니다.", icon="✅")
+        return True
+    except gspread.exceptions.APIError as e:
+        st.error("Google Sheets API 오류로 저장에 실패했습니다. GCP에서 API가 활성화되었는지 확인하세요.")
+        st.json(e.response.json())
+        return False
+    except Exception as e:
+        st.error(f"Google Sheets 저장 중 예상치 못한 오류가 발생했습니다:")
+        st.exception(e)
+        return False
+
+# --- 분석 헬퍼 함수 (이하 변경 없음) ---
 def clean_text(text):
     if not isinstance(text, str): return ''
     text = text.lower(); text = re.sub(r'\(.*?\)|\[.*?\]', ' ', text); text = re.sub(r'(\d+)\s*(?:y|yo|year|years|old|년산|년)', r'\1', text); text = re.sub(r'[^a-z0-9\s\uac00-\ud7a3]', ' ', text); text = re.sub(r'\b산\b', ' ', text)
@@ -105,6 +120,7 @@ def run_all_analysis(user_inputs, full_company_data, selected_products, target_i
         analysis_result['supply_chain'] = {"user_avg_price": user_avg_price, "user_total_volume": sum(item['Volume'] for item in user_inputs), "alternatives": supplier_analysis}
     return analysis_result
 
+# --- UI 컴포넌트 (이하 변경 없음) ---
 def login_screen():
     st.title("🔐 수입 경쟁력 진단 솔루션")
     with st.form("login_form"):
@@ -136,83 +152,4 @@ def main_dashboard(company_data):
             else: st.session_state[f'exporter{key_suffix}'] = exporter_val_selected
             st.session_state[f'volume{key_suffix}'] = cols[5].number_input(f"volume_widget{key_suffix}", min_value=0.01, format="%.2f", value=st.session_state.get(f'volume{key_suffix}', 1.0), key=f"volume_widget_k{key_suffix}", label_visibility="collapsed")
             st.session_state[f'value{key_suffix}'] = cols[6].number_input(f"value_widget{key_suffix}", min_value=0.01, format="%.2f", value=st.session_state.get(f'value{key_suffix}', 1.0), key=f"value_widget_k{key_suffix}", label_visibility="collapsed")
-            st.session_state[f'incoterms{key_suffix}'] = cols[7].selectbox(f"incoterms_widget{key_suffix}", ["FOB", "CFR", "CIF", "EXW", "DDP", "기타"], index=["FOB", "CFR", "CIF", "EXW", "DDP", "기타"].index(st.session_state.get(f'incoterms{key_suffix}', 'FOB')), key=f"incoterms_widget_k{key_suffix}", label_visibility="collapsed")
-            if len(st.session_state.rows) > 1 and cols[8].button("삭제", key=f"delete{key_suffix}"): st.session_state.rows.pop(i); st.rerun()
-        if st.button("➕ 내역 추가하기"):
-            new_id = max(row['id'] for row in st.session_state.rows) + 1 if st.session_state.rows else 1; st.session_state.rows.append({'id': new_id}); st.rerun()
-        st.markdown("---")
-        consent = st.checkbox("정보 활용 동의", value=st.session_state.get('consent', True), key='consent_widget'); st.session_state['consent'] = consent
-        if st.button("분석하기", type="primary", use_container_width=True):
-            all_input_data = []; is_valid = True
-            if not importer_name: st.error("⚠️ [입력 오류] 귀사의 업체명을 입력해주세요."); is_valid = False
-            if not consent: st.warning("⚠️ 정보 활용 동의에 체크해주세요."); is_valid = False
-            for i, row in enumerate(st.session_state.rows):
-                key_suffix = f"_{row['id']}"; entry = { "Date": st.session_state.get(f'date{key_suffix}'), "Reported Product Name": st.session_state.get(f'product_name{key_suffix}'), "HS-Code": st.session_state.get(f'hscode{key_suffix}'), "Origin Country": st.session_state.get(f'origin{key_suffix}'), "Exporter": st.session_state.get(f'exporter{key_suffix}'), "Volume": st.session_state.get(f'volume{key_suffix}'), "Value": st.session_state.get(f'value{key_suffix}'), "Incoterms": st.session_state.get(f'incoterms{key_suffix}')}
-                all_input_data.append(entry)
-                if not all([entry['Reported Product Name'], entry['HS-Code'], entry['Origin Country'], entry['Exporter']]): st.error(f"⚠️ [입력 오류] {i+1}번째 줄의 필수 항목을 모두 입력해주세요."); is_valid = False
-            if is_valid:
-                with st.spinner('입력 데이터를 저장하고 분석을 시작합니다...'):
-                    purchase_df = pd.DataFrame(all_input_data)
-                    save_to_google_sheets(purchase_df, importer_name, consent)
-                    purchase_df['cleaned_name'] = purchase_df['Reported Product Name'].apply(clean_text)
-                    agg_funcs = {'Volume': 'sum', 'Value': 'sum', 'Reported Product Name': 'first', 'HS-Code': 'first', 'Exporter': 'first', 'Date':'first', 'Origin Country':'first', 'Incoterms':'first'}
-                    aggregated_purchase_df = purchase_df.groupby('cleaned_name', as_index=False).agg(agg_funcs)
-                    analysis_groups = []
-                    company_data['cleaned_name'] = company_data['reported_product_name'].apply(clean_text)
-                    for _, row in aggregated_purchase_df.iterrows():
-                        entry = row.to_dict(); user_tokens = set(entry['cleaned_name'].split()); is_match = lambda name: user_tokens.issubset(set(str(name).split())); matched_df = company_data[company_data['cleaned_name'].apply(is_match)]; matched_products = sorted(matched_df['reported_product_name'].unique().tolist()); result = run_all_analysis([entry], company_data, matched_products, importer_name)
-                        analysis_groups.append({"user_input": entry, "matched_products": matched_products, "selected_products": matched_products, "result": result})
-                    st.session_state['importer_name_result'] = importer_name; st.session_state['analysis_groups'] = analysis_groups
-                    st.success("분석 완료!"); st.rerun()
-    if 'analysis_groups' in st.session_state:
-        st.header("📊 분석 결과")
-        # 이하 분석 결과 표시 로직은 변경 없음
-        for i, group in enumerate(st.session_state.analysis_groups):
-            product_name = group['user_input']['Reported Product Name']; st.subheader(f"분석 그룹: \"{product_name}\"")
-            result, p_res, s_res = group['result'], group['result'].get('positioning'), group['result'].get('supply_chain')
-            st.markdown("#### PART 1. 시장 포지션 분석")
-            if not p_res or p_res['importer_stats'].empty: st.info("포지션 분석을 위한 데이터가 부족합니다."); continue
-            importer_stats = p_res['importer_stats']; target_name = st.session_state.get('importer_name_result', '')
-            try:
-                target_rank = importer_stats[importer_stats['importer'] == target_name].index[0]; rank_margin = max(1, int(len(importer_stats) * 0.1)); direct_peers = importer_stats.iloc[max(0, target_rank - rank_margin):min(len(importer_stats), target_rank + rank_margin + 1)]
-            except IndexError: direct_peers = pd.DataFrame()
-            plot_df = pd.concat([importer_stats.head(5), direct_peers, p_res['target_stats']]).drop_duplicates().reset_index(drop=True)
-            plot_df['Anonymized_Importer'] = [f"{chr(ord('A')+j)}사" if imp != target_name else target_name for j, imp in enumerate(plot_df['importer'])]
-            log_values = np.log1p(plot_df['total_value']); min_size, max_size = 15, 80
-            if log_values.max() > log_values.min(): plot_df['size'] = min_size + ((log_values - log_values.min()) / (log_values.max() - log_values.min())) * (max_size - min_size)
-            else: plot_df['size'] = [min_size] * len(plot_df)
-            x_mean = importer_stats['total_volume'].mean(); y_mean = importer_stats['avg_unitprice'].mean()
-            fig = go.Figure()
-            competitors = plot_df[plot_df['importer'] != target_name]; fig.add_trace(go.Scatter(x=competitors['total_volume'], y=competitors['avg_unitprice'], mode='markers', marker=dict(size=competitors['size'], color='#BDBDBD', opacity=0.5), text=competitors['Anonymized_Importer'], hovertemplate='<b>%{text}</b><br>수입량: %{x:,.0f} KG<br>평균단가: $%{y:,.2f}<extra></extra>'))
-            target_df = plot_df[plot_df['importer'] == target_name]
-            if not target_df.empty: fig.add_trace(go.Scatter(x=target_df['total_volume'], y=target_df['avg_unitprice'], mode='markers', marker=dict(size=target_df['size'], color='#FF4B4B', opacity=1.0, line=dict(width=2, color='black')), text=target_df['Anonymized_Importer'], hovertemplate='<b>%{text}</b><br>수입량: %{x:,.0f} KG<br>평균단가: $%{y:,.2f}<extra></extra>'))
-            fig.add_vline(x=x_mean, line_dash="dash", line_color="gray", annotation_text="평균 수입량"); fig.add_hline(y=y_mean, line_dash="dash", line_color="gray", annotation_text="평균 단가")
-            x_range = np.log10(importer_stats['total_volume'].max()) - np.log10(importer_stats['total_volume'].min()); y_range = importer_stats['avg_unitprice'].max() - importer_stats['avg_unitprice'].min()
-            fig.add_annotation(x=np.log10(x_mean) + x_range*0.4, y=y_mean+y_range*0.4, text="<b>시장 선도 그룹</b>", showarrow=False, font=dict(color="grey")); fig.add_annotation(x=np.log10(x_mean) - x_range*0.4, y=y_mean+y_range*0.4, text="<b>니치/프리미엄 그룹</b>", showarrow=False, font=dict(color="grey")); fig.add_annotation(x=np.log10(x_mean) - x_range*0.4, y=y_mean-y_range*0.4, text="<b>소규모/가격 경쟁 그룹</b>", showarrow=False, font=dict(color="grey")); fig.add_annotation(x=np.log10(x_mean) + x_range*0.4, y=y_mean-y_range*0.4, text="<b>대규모/가성비 그룹</b>", showarrow=False, font=dict(color="grey"))
-            if not target_df.empty: target = target_df.iloc[0]; fig.add_annotation(x=np.log10(target['total_volume']), y=target['avg_unitprice'], text="<b>귀사 위치</b>", showarrow=True, arrowhead=2, arrowcolor="#FF4B4B", ax=-40, ay=-40, bordercolor="#FF4B4B", borderwidth=2, bgcolor="white")
-            fig.update_layout(title="<b>수입사 포지셔닝 맵 (시장 전략 분석)</b>", xaxis_title="총 수입 중량 (KG, Log Scale)", yaxis_title="평균 수입 단가 (USD/KG)", showlegend=False, xaxis_type="log")
-            st.plotly_chart(fig, use_container_width=True)
-            st.markdown("##### **시장 전략 그룹별 상세 분석**")
-            st.info("포지셔닝 맵의 4개 그룹에 속한 기업들의 상세 데이터를 비교하여 각 그룹의 특징을 파악합니다.")
-            fig_box = px.box(importer_stats, x='quadrant_group', y='avg_unitprice', title="<b>전략 그룹별 단가 분포</b>", points='all', labels={'quadrant_group': '전략 그룹 유형', 'avg_unitprice': '평균 수입 단가'}, category_orders={"quadrant_group": ["소규모/가격 경쟁 그룹", "대규모/가성비 그룹", "니치/프리미엄 그룹", "시장 선도 그룹"]})
-            if not p_res['target_stats'].empty: fig_box.add_hline(y=p_res['target_stats']['avg_unitprice'].iloc[0], line_dash="dot", line_color="orange", annotation_text="귀사 단가")
-            st.plotly_chart(fig_box, use_container_width=True)
-            st.markdown("---"); st.markdown("#### PART 2. 공급망 분석 및 비용 절감 시뮬레이션")
-            if not s_res or s_res['alternatives'].empty: st.info("현재 거래 조건보다 더 저렴한 대안 공급처를 찾지 못했습니다.")
-            else:
-                alts, best_deal = s_res['alternatives'], s_res['alternatives'].iloc[0]; st.success(f"**비용 절감 기회 포착!** 현재 거래처보다 **최대 {best_deal['price_saving_pct']:.1f}%** 저렴한 대체 거래처가 존재합니다.")
-                col1, col2 = st.columns(2); target_saving_pct = col1.slider("목표 단가 절감률(%)", 0.0, float(best_deal['price_saving_pct']), float(best_deal['price_saving_pct'] / 2), 0.5, "%.1f%%", key=f"slider_{i}"); expected_saving = s_res['user_total_volume'] * s_res['user_avg_price'] * (target_saving_pct / 100); col2.metric(f"예상 절감액 (수입량 {s_res['user_total_volume']:,.0f}KG 기준)", f"${expected_saving:,.0f}")
-                st.markdown("##### **추천 대체 공급처 리스트** (안정성 함께 고려)"); recommended_list = alts[alts['price_saving_pct'] >= target_saving_pct].copy(); recommended_list.rename(columns={'exporter': '수출업체', 'avg_unitprice': '평균 단가', 'price_saving_pct': '가격 경쟁력(%)', 'trade_count': '거래 빈도', 'num_importers': '거래처 수', 'stability_score': '공급 안정성'}, inplace=True)
-                st.dataframe(recommended_list[['수출업체', '평균 단가', '가격 경쟁력(%)', '거래 빈도', '거래처 수', '공급 안정성']], use_container_width=True, column_config={"평균 단가": st.column_config.NumberColumn(format="$%.2f"), "가격 경쟁력(%)": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=alts['price_saving_pct'].max()), "공급 안정성": st.column_config.BarChartColumn(y_min=0, y_max=alts['stability_score'].max())}, hide_index=True)
-            st.markdown("---")
-
-# --- 메인 실행 로직 ---
-if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
-if not st.session_state['logged_in']:
-    login_screen()
-else:
-    company_data = load_company_data()
-    if company_data is not None:
-        main_dashboard(company_data)
-    else:
-        st.error("데이터 로딩에 실패했습니다. 페이지를 새로고침하거나 앱 설정을 확인해주세요.")
+            st.session_state[f'incoterms{key_suffix}'] = cols[7].selectbox(f"incoterms_widget{key_suffix}", ["
