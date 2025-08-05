@@ -14,13 +14,25 @@ from zoneinfo import ZoneInfo
 # --- 페이지 초기 설정 ---
 st.set_page_config(layout="wide", page_title="수입 경쟁력 진단 솔루션")
 
+# --- API 사용 범위(Scope) 정의 ---
+# 이 코드가 우리가 사용할 API 목록을 명시적으로 선언합니다.
+SCOPES = [
+    'https://www.googleapis.com/auth/spreadsheets',
+    'https://www.googleapis.com/auth/drive.file',
+    'https://www.googleapis.com/auth/bigquery'
+]
+
 # --- 데이터 로딩 (BigQuery) ---
 @st.cache_data(ttl=3600)
 def load_company_data():
     """Google BigQuery에서 데이터를 불러오고 기본 전처리를 수행합니다."""
     try:
-        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
-        project_id = st.secrets["gcp_service_account"]["project_id"]
+        # --- 수정된 부분: Scopes 추가 ---
+        creds_dict = st.secrets["gcp_service_account"]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        # ---------------------------------
+        
+        project_id = creds_dict["project_id"]
         table_full_id = f"{project_id}.demo_data.tds_data"
         df = read_gbq(f"SELECT * FROM `{table_full_id}`", project_id=project_id, credentials=creds)
         df.columns = [re.sub(r'[^a-z0-9]+', '_', col.lower().strip()) for col in df.columns]
@@ -36,11 +48,15 @@ def load_company_data():
         return df
     except Exception as e: st.error(f"데이터 로딩 중 오류: {e}"); return None
 
-# --- Google Sheets 저장 (사용자 기록 기반 안정적인 방식으로 복원) ---
+# --- Google Sheets 저장 ---
 def save_to_google_sheets(purchase_df, importer_name, consent):
     """사용자 입력 데이터프레임을 지정된 구글 시트에 저장합니다."""
     try:
-        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
+        # --- 수정된 부분: Scopes 추가 ---
+        creds_dict = st.secrets["gcp_service_account"]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        # ---------------------------------
+        
         client = gspread.authorize(creds)
         spreadsheet_name = st.secrets.get("google_sheets", {}).get("spreadsheet_name", "DEMO_app_DB")
         worksheet_name = st.secrets.get("google_sheets", {}).get("worksheet_name", "Customer_input")
@@ -51,12 +67,7 @@ def save_to_google_sheets(purchase_df, importer_name, consent):
         
         rows_to_append = []
         for _, row in purchase_df.iterrows():
-            new_row = [
-                row["Date"].strftime('%Y-%m-%d'), row["Reported Product Name"], row["HS-Code"],
-                row["Origin Country"], row["Exporter"].upper(), row["Volume"], row["Value"],
-                row["Incoterms"], importer_name, consent,
-                datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S')
-            ]
+            new_row = [row["Date"].strftime('%Y-%m-%d'), row["Reported Product Name"], row["HS-Code"], row["Origin Country"], row["Exporter"].upper(), row["Volume"], row["Value"], row["Incoterms"], importer_name, consent, datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S')]
             rows_to_append.append(new_row)
         
         if rows_to_append:
@@ -64,7 +75,7 @@ def save_to_google_sheets(purchase_df, importer_name, consent):
         return True
     except Exception as e: st.error(f"Google Sheets 저장 중 오류: {e}"); return False
 
-# --- 분석 헬퍼 함수 ---
+# --- 분석 헬퍼 함수 (이하 변경 없음) ---
 def clean_text(text):
     if not isinstance(text, str): return ''
     text = text.lower(); text = re.sub(r'\(.*?\)|\[.*?\]', ' ', text); text = re.sub(r'(\d+)\s*(?:y|yo|year|years|old|년산|년)', r'\1', text); text = re.sub(r'[^a-z0-9\s\uac00-\ud7a3]', ' ', text); text = re.sub(r'\b산\b', ' ', text)
@@ -99,7 +110,7 @@ def run_all_analysis(user_inputs, full_company_data, selected_products, target_i
     
     return analysis_result
 
-# --- UI 컴포넌트 ---
+# --- UI 컴포넌트 (이하 변경 없음) ---
 def login_screen():
     st.title("🔐 수입 경쟁력 진단 솔루션")
     with st.form("login_form"):
@@ -121,44 +132,32 @@ def main_dashboard(company_data):
 
         for i, row in enumerate(st.session_state.rows):
             key_suffix = f"_{row['id']}"; cols = st.columns([1.5, 3, 1, 2, 2, 1, 1, 1, 0.5])
-            
-            # --- 강화된 상태 관리: 모든 입력 위젯의 값을 session_state에 명시적으로 저장하고 불러옵니다. ---
             st.session_state[f'date{key_suffix}'] = cols[0].date_input(f"date_widget{key_suffix}", value=st.session_state.get(f'date{key_suffix}', datetime.now().date()), key=f"date_widget_k{key_suffix}", label_visibility="collapsed")
             st.session_state[f'product_name{key_suffix}'] = cols[1].text_input(f"product_name_widget{key_suffix}", value=st.session_state.get(f'product_name{key_suffix}', ''), key=f"product_name_widget_k{key_suffix}", label_visibility="collapsed")
             st.session_state[f'hscode{key_suffix}'] = cols[2].text_input(f"hscode_widget{key_suffix}", max_chars=10, value=st.session_state.get(f'hscode{key_suffix}', ''), key=f"hscode_widget_k{key_suffix}", label_visibility="collapsed")
-            
-            origin_options = [''] + ['직접 입력'] + sorted(company_data['export_country'].unique())
-            origin_val_selected = cols[3].selectbox(f"origin_widget{key_suffix}", origin_options, index=origin_options.index(st.session_state.get(f'origin_selected{key_suffix}', '')) if st.session_state.get(f'origin_selected{key_suffix}') in origin_options else 0, key=f"origin_widget_k{key_suffix}", label_visibility="collapsed", format_func=lambda x: '선택' if x == '' else x)
+            origin_options = [''] + ['직접 입력'] + sorted(company_data['export_country'].unique()); origin_val_selected = cols[3].selectbox(f"origin_widget{key_suffix}", origin_options, index=origin_options.index(st.session_state.get(f'origin_selected{key_suffix}', '')) if st.session_state.get(f'origin_selected{key_suffix}') in origin_options else 0, key=f"origin_widget_k{key_suffix}", label_visibility="collapsed", format_func=lambda x: '선택' if x == '' else x)
             st.session_state[f'origin_selected{key_suffix}'] = origin_val_selected
             if origin_val_selected == '직접 입력': st.session_state[f'origin{key_suffix}'] = cols[3].text_input("custom_origin", value=st.session_state.get(f'origin{key_suffix}', ''), key=f"custom_origin_k{key_suffix}", label_visibility="collapsed", placeholder="원산지 직접 입력")
             else: st.session_state[f'origin{key_suffix}'] = origin_val_selected
-
-            exporter_options = [''] + ['직접 입력'] + sorted(company_data['exporter'].unique())
-            exporter_val_selected = cols[4].selectbox(f"exporter_widget{key_suffix}", exporter_options, index=exporter_options.index(st.session_state.get(f'exporter_selected{key_suffix}', '')) if st.session_state.get(f'exporter_selected{key_suffix}') in exporter_options else 0, key=f"exporter_widget_k{key_suffix}", label_visibility="collapsed", format_func=lambda x: '선택' if x == '' else x)
+            exporter_options = [''] + ['직접 입력'] + sorted(company_data['exporter'].unique()); exporter_val_selected = cols[4].selectbox(f"exporter_widget{key_suffix}", exporter_options, index=exporter_options.index(st.session_state.get(f'exporter_selected{key_suffix}', '')) if st.session_state.get(f'exporter_selected{key_suffix}') in exporter_options else 0, key=f"exporter_widget_k{key_suffix}", label_visibility="collapsed", format_func=lambda x: '선택' if x == '' else x)
             st.session_state[f'exporter_selected{key_suffix}'] = exporter_val_selected
             if exporter_val_selected == '직접 입력': st.session_state[f'exporter{key_suffix}'] = cols[4].text_input("custom_exporter", value=st.session_state.get(f'exporter{key_suffix}', ''), key=f"custom_exporter_k{key_suffix}", label_visibility="collapsed", placeholder="수출업체 직접 입력")
             else: st.session_state[f'exporter{key_suffix}'] = exporter_val_selected
-                
             st.session_state[f'volume{key_suffix}'] = cols[5].number_input(f"volume_widget{key_suffix}", min_value=0.01, format="%.2f", value=st.session_state.get(f'volume{key_suffix}', 1.0), key=f"volume_widget_k{key_suffix}", label_visibility="collapsed")
             st.session_state[f'value{key_suffix}'] = cols[6].number_input(f"value_widget{key_suffix}", min_value=0.01, format="%.2f", value=st.session_state.get(f'value{key_suffix}', 1.0), key=f"value_widget_k{key_suffix}", label_visibility="collapsed")
             st.session_state[f'incoterms{key_suffix}'] = cols[7].selectbox(f"incoterms_widget{key_suffix}", ["FOB", "CFR", "CIF", "EXW", "DDP", "기타"], index=["FOB", "CFR", "CIF", "EXW", "DDP", "기타"].index(st.session_state.get(f'incoterms{key_suffix}', 'FOB')), key=f"incoterms_widget_k{key_suffix}", label_visibility="collapsed")
-            
             if len(st.session_state.rows) > 1 and cols[8].button("삭제", key=f"delete{key_suffix}"): st.session_state.rows.pop(i); st.rerun()
 
         if st.button("➕ 내역 추가하기"):
-            new_id = max(row['id'] for row in st.session_state.rows) + 1 if st.session_state.rows else 1
-            st.session_state.rows.append({'id': new_id}); st.rerun()
+            new_id = max(row['id'] for row in st.session_state.rows) + 1 if st.session_state.rows else 1; st.session_state.rows.append({'id': new_id}); st.rerun()
         
         st.markdown("---")
-        consent = st.checkbox("정보 활용 동의", value=st.session_state.get('consent', True), key='consent_widget')
-        st.session_state['consent'] = consent
+        consent = st.checkbox("정보 활용 동의", value=st.session_state.get('consent', True), key='consent_widget'); st.session_state['consent'] = consent
         
         if st.button("분석하기", type="primary", use_container_width=True):
-            all_input_data = []
-            is_valid = True
+            all_input_data = []; is_valid = True
             if not importer_name: st.error("⚠️ [입력 오류] 귀사의 업체명을 입력해주세요."); is_valid = False
             if not consent: st.warning("⚠️ 정보 활용 동의에 체크해주세요."); is_valid = False
-            
             for i, row in enumerate(st.session_state.rows):
                 key_suffix = f"_{row['id']}"; entry = { "Date": st.session_state.get(f'date{key_suffix}'), "Reported Product Name": st.session_state.get(f'product_name{key_suffix}'), "HS-Code": st.session_state.get(f'hscode{key_suffix}'), "Origin Country": st.session_state.get(f'origin{key_suffix}'), "Exporter": st.session_state.get(f'exporter{key_suffix}'), "Volume": st.session_state.get(f'volume{key_suffix}'), "Value": st.session_state.get(f'value{key_suffix}'), "Incoterms": st.session_state.get(f'incoterms{key_suffix}')}
                 all_input_data.append(entry)
@@ -168,22 +167,20 @@ def main_dashboard(company_data):
                 with st.spinner('입력 데이터를 저장하고 분석을 시작합니다...'):
                     purchase_df = pd.DataFrame(all_input_data)
                     save_to_google_sheets(purchase_df, importer_name, consent)
-                    
                     purchase_df['cleaned_name'] = purchase_df['Reported Product Name'].apply(clean_text)
                     agg_funcs = {'Volume': 'sum', 'Value': 'sum', 'Reported Product Name': 'first', 'HS-Code': 'first', 'Exporter': 'first', 'Date':'first', 'Origin Country':'first', 'Incoterms':'first'}
                     aggregated_purchase_df = purchase_df.groupby('cleaned_name', as_index=False).agg(agg_funcs)
-
                     analysis_groups = []
                     company_data['cleaned_name'] = company_data['reported_product_name'].apply(clean_text)
                     for _, row in aggregated_purchase_df.iterrows():
                         entry = row.to_dict(); user_tokens = set(entry['cleaned_name'].split()); is_match = lambda name: user_tokens.issubset(set(str(name).split())); matched_df = company_data[company_data['cleaned_name'].apply(is_match)]; matched_products = sorted(matched_df['reported_product_name'].unique().tolist()); result = run_all_analysis([entry], company_data, matched_products, importer_name)
                         analysis_groups.append({"user_input": entry, "matched_products": matched_products, "selected_products": matched_products, "result": result})
-                    
                     st.session_state['importer_name_result'] = importer_name; st.session_state['analysis_groups'] = analysis_groups
                     st.success("분석 완료!"); st.rerun()
 
     if 'analysis_groups' in st.session_state:
         st.header("📊 분석 결과")
+        # 이하 분석 결과 표시 로직은 변경 없음
         for i, group in enumerate(st.session_state.analysis_groups):
             product_name = group['user_input']['Reported Product Name']; st.subheader(f"분석 그룹: \"{product_name}\"")
             result, p_res, s_res = group['result'], group['result'].get('positioning'), group['result'].get('supply_chain')
