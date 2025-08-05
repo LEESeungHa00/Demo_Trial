@@ -100,7 +100,8 @@ def run_all_analysis(user_input, company_data, target_importer_name):
     company_data['unitPrice'] = company_data['value'] / company_data['volume']
     
     # 0. Overview 분석
-    hscode_data = company_data[company_data['hs_code'] == user_input['HS-CODE']]
+    # 최종 수정: 데이터 타입을 문자열로 통일하여 비교
+    hscode_data = company_data[company_data['hs_code'].astype(str) == str(user_input['HS-CODE'])]
     if not hscode_data.empty:
         this_year = datetime.now().year
         last_year = this_year - 1
