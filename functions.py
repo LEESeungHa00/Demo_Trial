@@ -46,32 +46,20 @@ def load_company_data():
         
         df.dropna(how="all", inplace=True)
         
-        # 최종 수정: 데이터 정제 전, 어떤 데이터가 문제인지 진단하는 기능 추가
-        df_original = df.copy()
-
         def clean_and_convert_numeric(series):
             series_str = series.astype(str)
             series_cleaned = series_str.str.replace(r'[^\d.]', '', regex=True)
             return pd.to_numeric(series_cleaned, errors='coerce')
 
-        df['Date_converted'] = pd.to_datetime(df['Date'], errors='coerce')
-        df['Volume_converted'] = clean_and_convert_numeric(df['Volume'])
-        df['Value_converted'] = clean_and_convert_numeric(df['Value'])
-        
-        problematic_rows = df[df['Date_converted'].isnull() | df['Volume_converted'].isnull() | df['Value_converted'].isnull()]
-        
-        df = df_original
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
         df['Volume'] = clean_and_convert_numeric(df['Volume'])
         df['Value'] = clean_and_convert_numeric(df['Value'])
+
         df.dropna(subset=['Date', 'Volume', 'Value'], inplace=True)
 
         if df.empty:
             st.error("데이터 정제 후 남은 데이터가 없습니다.")
             st.info("BigQuery 테이블의 'Date', 'Volume', 'Value' 컬럼에 유효한 데이터가 있는지 확인해주세요.")
-            if not problematic_rows.empty:
-                st.warning("아래는 데이터 타입 변환에 실패한 행의 예시입니다. 원본 데이터(Google Sheets)의 형식을 확인해주세요:")
-                st.dataframe(problematic_rows[['Date', 'Volume', 'Value']].head())
             return None
             
         return df
@@ -147,8 +135,9 @@ def process_analysis_data(user_input_row, comparison_df, target_importer_name):
             saving_info_yearly = {'potential_saving': potential_saving}
         yearly_data = all_df[(all_df['Exporter'].str.upper() == exporter) & (all_df['Origin Country'].str.upper() == origin)]
         summary = yearly_data.groupby('year').agg(volume=('Volume', 'sum'), value=('Value', 'sum')).reset_index()
-        summary['unitPrice'] = summary['value'] / summary['volume']
-        yearly_analysis[key_yearly] = {'chart_data': summary, 'saving_info': saving_info_yearly}
+        if not summary.empty:
+            summary['unitPrice'] = summary['value'] / summary['volume']
+            yearly_analysis[key_yearly] = {'chart_data': summary, 'saving_info': saving_info_yearly}
 
         key_ts = origin
         related_trades_ts = all_df[all_df['Origin Country'].str.upper() == origin]
@@ -248,4 +237,148 @@ def main_dashboard(company_data):
                         'HS-CODE': st.session_state[f'hscode_{i}'],
                         'Origin Country': origin_val.upper(),
                         'Exporter': exporter_val.upper(),
-                        'Volume': st.session_st
+                        'Volume': st.session_state[f'volume_{i}'],
+                        'Value': st.session_state[f'value_{i}'],
+                        'Incoterms': st.session_state[f'incoterms_{i}'],
+                    }
+
+                    if not user_product_name or not origin_val or not exporter_val:
+                        st.error(f"{i+1}번째 행의 '제품 상세명', '원산지', '수출업체'는 필수 입력 항목입니다.")
+                        return
+                    
+                    all_purchase_data.append(entry)
+                    user_tokens = set(clean_text(user_product_name).split())
+                    
+                    def is_match(cleaned_tds_name):
+                        return user_tokens.issubset(set(cleaned_tds_name.split()))
+                    
+                    matched_df = company_data[company_data['cleaned_name'].apply(is_match)]
+                    
+                    analysis_groups.append({
+                        "id": i,
+                        "user_input": entry,
+                        "matched_products": sorted(matched_df['Reported Product Name'].unique().tolist()),
+                        "selected_products": sorted(matched_df['Reported Product Name'].unique().tolist())
+                    })
+
+                try:
+                    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+                    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+                    client = gspread.authorize(creds)
+                    spreadsheet = client.open("DEMO_app_DB")
+                    
+                    try:
+                        worksheet = spreadsheet.worksheet("Customer_input")
+                    except gspread.exceptions.WorksheetNotFound:
+                        worksheet = spreadsheet.add_worksheet(title="Customer_input", rows=1, cols=20)
+
+                    save_data_df = pd.DataFrame(all_purchase_data)
+                    save_data_df['importer_name'] = importer_name
+                    save_data_df['consent'] = consent
+                    save_data_df['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    save_data_df['Date'] = pd.to_datetime(save_data_df['Date']).dt.strftime('%Y-%m-%d')
+                    
+                    if not worksheet.get('A1'):
+                        worksheet.update([save_data_df.columns.values.tolist()] + save_data_df.values.tolist(), value_input_option='USER_ENTERED')
+                    else:
+                        worksheet.append_rows(save_data_df.values.tolist(), value_input_option='USER_ENTERED')
+
+                    st.toast("입력 정보가 Google Sheet에 저장되었습니다.", icon="✅")
+                except gspread.exceptions.APIError as e:
+                    st.error("Google Sheets API 오류로 저장에 실패했습니다.")
+                    st.json(e.response.json())
+                except Exception as e:
+                    st.error(f"Google Sheets 저장 중 예상치 못한 오류가 발생했습니다: {e}")
+
+                st.session_state['importer_name_result'] = importer_name
+                st.session_state['analysis_groups'] = analysis_groups
+                st.rerun()
+
+    if 'analysis_groups' in st.session_state:
+        st.header("📊 분석 결과")
+        
+        with st.expander("STEP 2: 분석 대상 제품 필터링", expanded=True):
+            for i, group in enumerate(st.session_state.analysis_groups):
+                st.markdown(f"**분석 그룹: \"{group['user_input']['Reported Product Name']}\"**")
+                selected = st.multiselect(
+                    "이 그룹의 분석에 활용할 제품명을 선택하세요.",
+                    options=group['matched_products'],
+                    default=group['selected_products'],
+                    key=f"filter_{group['id']}"
+                )
+                st.session_state.analysis_groups[i]['selected_products'] = selected
+                st.markdown("---")
+
+        for group in st.session_state.analysis_groups:
+            st.subheader(f"분석 결과: \"{group['user_input']['Reported Product Name']}\"")
+            
+            if not group['selected_products']:
+                st.warning("선택된 비교 대상 제품이 없어 분석을 건너뜁니다.")
+                continue
+
+            comparison_df = company_data[company_data['Reported Product Name'].isin(group['selected_products'])]
+            
+            competitor_res, yearly_res, timeseries_res = process_analysis_data(
+                group['user_input'], 
+                comparison_df, 
+                st.session_state['importer_name_result']
+            )
+            
+            st.markdown("#### 1. 경쟁사 Unit Price 비교 분석")
+            if not competitor_res:
+                st.write("비교할 경쟁사 데이터가 없습니다.")
+            else:
+                for (year, exporter), data in competitor_res.items():
+                    with st.container(border=True):
+                        st.markdown(f"**{year}년 / 수출업체: {exporter}**")
+                        data['구분'] = np.where(data['Importer'] == st.session_state['importer_name_result'].upper(), '귀사', '경쟁사')
+                        fig = px.box(data, x='Importer', y='unitPrice', title=f"경쟁사 Unit Price 분포 비교",
+                                     color='구분',
+                                     color_discrete_map={'귀사': '#ef4444', '경쟁사': '#3b82f6'},
+                                     points='all')
+                        fig.update_layout(legend_title_text=None, xaxis_title="수입사", yaxis_title="Unit Price (USD/KG)")
+                        st.plotly_chart(fig, use_container_width=True)
+
+            st.markdown("#### 2. 연도별 수입 중량 및 Unit Price 트렌드")
+            if not yearly_res:
+                st.write("분석할 연도별 데이터가 없습니다.")
+            else:
+                for (exporter, origin), data in yearly_res.items():
+                    with st.container(border=True):
+                        st.markdown(f"**{exporter} 로부터의 {origin}산 품목 수입 트렌드**")
+                        fig = go.Figure()
+                        fig.add_trace(go.Bar(x=data['chart_data']['year'], y=data['chart_data']['volume'], name='수입 중량 (KG)', yaxis='y1'))
+                        fig.add_trace(go.Line(x=data['chart_data']['year'], y=data['chart_data']['unitPrice'], name='Unit Price (USD/KG)', yaxis='y2', mode='lines+markers'))
+                        fig.update_layout(yaxis=dict(title="수입 중량 (KG)"), yaxis2=dict(title="Unit Price (USD/KG)", overlaying='y', side='right'), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+                        st.plotly_chart(fig, use_container_width=True)
+                        if data['saving_info']: st.success(f"💰 데이터 기반 예상 절감 가능 금액: 약 ${data['saving_info']['potential_saving']:,.0f}")
+
+            st.markdown(f"#### 3. \"{group['user_input']['Reported Product Name']}\" 수입 추이")
+            if not timeseries_res:
+                st.write("분석할 시계열 데이터가 없습니다.")
+            else:
+                for origin, data in timeseries_res.items():
+                    with st.container(border=True):
+                        st.markdown(f"**{origin} 원산지 품목 Unit Price 트렌드**")
+                        fig = px.line(data['chart_data'], x='monthYear', y=['avgPrice', 'targetPrice', 'bestPrice'], markers=True, labels={'monthYear': '월', 'value': 'Unit Price (USD/KG)'})
+                        new_names = {'avgPrice':'시장 평균가', 'targetPrice':'귀사 평균가', 'bestPrice':'시장 최저가'}
+                        fig.for_each_trace(lambda t: t.update(name = new_names[t.name]))
+                        st.plotly_chart(fig, use_container_width=True)
+                        if data['saving_info']: st.success(f"💰 데이터 기반 예상 절감 가능 금액: 약 ${data['saving_info']['potential_saving']:,.0f}")
+
+        if st.button("🔄 새로운 분석 시작하기"):
+            keys_to_keep = ['logged_in']
+            for key in list(st.session_state.keys()):
+                if key not in keys_to_keep: del st.session_state[key]
+            st.rerun()
+
+# --- 메인 로직 ---
+if 'logged_in' not in st.session_state: 
+    st.session_state['logged_in'] = False
+
+if st.session_state['logged_in']:
+    our_company_data = load_company_data()
+    if our_company_data is not None:
+        main_dashboard(our_company_data)
+else:
+    login_screen()
