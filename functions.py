@@ -10,7 +10,6 @@ from google.oauth2.service_account import Credentials
 from pandas_gbq import read_gbq
 import gspread
 from zoneinfo import ZoneInfo
-import string
 
 # --- 페이지 초기 설정 ---
 st.set_page_config(layout="wide", page_title="수입 경쟁력 진단 솔루션")
@@ -118,15 +117,6 @@ def run_all_analysis(user_inputs, full_company_data, selected_products, target_i
     monthly_benchmarks = analysis_data.groupby('month')['unitprice'].transform('mean')
     analysis_data['price_index'] = analysis_data['unitprice'] / monthly_benchmarks
     importer_stats = analysis_data.groupby('importer').agg(total_value=('value', 'sum'), total_volume=('volume', 'sum'), trade_count=('value', 'count'), price_index=('price_index', 'mean')).reset_index().sort_values('total_value', ascending=False).reset_index(drop=True)
-    
-    # ⚠️ importer 마스킹 로직
-    target_importer_name = target_importer_name.upper() if isinstance(target_importer_name, str) else None
-    competitors_df = importer_stats[importer_stats['importer'] != target_importer_name].copy()
-    alphabet_list = list(string.ascii_uppercase)
-    importer_mapping = {importer: f"{alphabet_list[i]}사" for i, importer in enumerate(competitors_df['importer'].unique())}
-    importer_mapping[target_importer_name] = '귀사(평균)'
-    
-    importer_stats['importer_display'] = importer_stats['importer'].map(importer_mapping).fillna('기타 경쟁사')
     
     volume_mean = importer_stats['total_volume'].mean(); price_index_mean = 1.0
     importer_stats['quadrant_group'] = importer_stats.apply(assign_quadrant_group, axis=1, args=(volume_mean, price_index_mean))
@@ -262,35 +252,17 @@ def main_dashboard(company_data):
             col1, col2 = st.columns([10,1]); col1.markdown("##### **3-1. 시장 내 전략적 위치 (시점 정규화)**")
             with col2:
                 with st.popover("ℹ️"): st.markdown("""**가격 경쟁력 지수란?**\n계절성이나 시장 트렌드 등 시점 요인을 제거한 순수한 가격 경쟁력입니다.\n- **계산식:** `개별 거래 단가 / 해당 월의 시장 평균 단가`\n- **1.0 미만:** 시장 평균보다 저렴하게 구매\n- **1.0 초과:** 시장 평균보다 비싸게 구매""")
-            
-            importer_stats = p_res['importer_stats']
-            
+            importer_stats = p_res['importer_stats']; target_name = st.session_state.get('importer_name_result', '')
             log_values = np.log1p(importer_stats['total_volume']); min_size, max_size = 15, 80
             if log_values.max() > log_values.min(): importer_stats['size'] = min_size + ((log_values - log_values.min()) / (log_values.max() - log_values.min())) * (max_size - min_size)
             else: importer_stats['size'] = [min_size] * len(importer_stats)
-            
             x_mean = importer_stats['total_volume'].mean(); y_mean = 1.0
-            
             fig_pos = go.Figure()
-            # 마스킹된 경쟁사 데이터와 귀사 데이터를 모두 포함하여 Scatter 플롯 생성
-            fig_pos.add_trace(go.Scatter(
-                x=importer_stats['total_volume'], 
-                y=importer_stats['price_index'], 
-                mode='markers', 
-                marker=dict(
-                    size=importer_stats['size'], 
-                    color=importer_stats['importer_display'].apply(lambda x: '#FF4B4B' if x == '귀사(평균)' else '#BDBDBD'), 
-                    opacity=importer_stats['importer_display'].apply(lambda x: 1.0 if x == '귀사(평균)' else 0.5),
-                    line=dict(width=importer_stats['importer_display'].apply(lambda x: 2 if x == '귀사(평균)' else 0), color='black')
-                ),
-                text=importer_stats['importer_display'],
-                hovertemplate='<b>%{text}</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'
-            ))
-            
-            # 이번 거래 데이터 추가
+            competitors = importer_stats[importer_stats['importer'] != target_name]; fig_pos.add_trace(go.Scatter(x=competitors['total_volume'], y=competitors['price_index'], mode='markers', marker=dict(size=competitors['size'], color='#BDBDBD', opacity=0.5), text=competitors['importer'], hovertemplate='<b>%{text}</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'))
+            target_df = importer_stats[importer_stats['importer'] == target_name]
+            if not target_df.empty: fig_pos.add_trace(go.Scatter(x=target_df['total_volume'], y=target_df['price_index'], mode='markers', marker=dict(size=target_df['size'], color='#FF4B4B', opacity=1.0, line=dict(width=2, color='black')), name='귀사(과거 평균)', text=target_df['importer'], hovertemplate='<b>%{text} (평균)</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'))
             current_tx_norm = p_res.get('current_transaction_normalized')
             if current_tx_norm: fig_pos.add_trace(go.Scatter(x=[current_tx_norm['total_volume']], y=[current_tx_norm['price_index']], mode='markers', marker=dict(symbol='star', color='black', size=20, line=dict(color='white', width=2)), name='이번 거래', hovertemplate='<b>이번 거래</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'))
-            
             fig_pos.add_vline(x=x_mean, line_dash="dash", line_color="gray"); fig_pos.add_hline(y=y_mean, line_dash="dash", line_color="gray")
             fig_pos.update_layout(title="<b>수입사 포지셔닝 맵 (시기 보정)</b>", xaxis_title="총 수입 중량 (KG, Log Scale)", yaxis_title="가격 경쟁력 지수 (1.0 = 시장 평균)", showlegend=False, xaxis_type="log")
             st.plotly_chart(fig_pos, use_container_width=True)
@@ -303,9 +275,6 @@ def main_dashboard(company_data):
                 if not df.empty: 
                     df_copy = df.copy()
                     df_copy['group_name'] = name
-                    # 여기에서도 importer_display 컬럼을 사용
-                    if name == "유사 규모 경쟁 그룹":
-                        df_copy['group_name'] = df_copy['importer_display']
                     group_data.append(df_copy[['group_name', 'price_index']])
             if group_data:
                 plot_df_box = pd.concat(group_data)
