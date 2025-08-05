@@ -8,82 +8,80 @@ from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 from pandas_gbq import read_gbq
+import calendar
+from zoneinfo import ZoneInfo # 시간대(Timezone) 라이브러리 추가
 
 # --- 초기 설정 및 페이지 구성 ---
 st.set_page_config(layout="wide", page_title="수입 경쟁력 진단 솔루션")
 
-# --- Google BigQuery에서 데이터 불러오기 (진단 기능 강화) ---
-@st.cache_data(ttl=3600)
+# --- 데이터 로딩 ---
+@st.cache_data(ttl=7200)
 def load_company_data():
     """Google BigQuery에서 TDS를 불러옵니다."""
     try:
         if "gcp_service_account" not in st.secrets:
             st.error("Secrets 설정 오류: `secrets.toml` 파일에 [gcp_service_account] 섹션이 없습니다.")
             return None
-
         creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
         project_id = st.secrets["gcp_service_account"]["project_id"]
-        
         dataset_id = "demo_data" 
         table_id = "tds_data"   
         table_full_id = f"{project_id}.{dataset_id}.{table_id}"
         dataset_location = "asia-northeast3" 
-
         query = f"SELECT * FROM `{table_full_id}`"
         df = read_gbq(query, project_id=project_id, credentials=creds, location=dataset_location)
-        
         if df.empty:
-            st.error("BigQuery 테이블에서 데이터를 불러왔지만 비어있습니다.")
+            st.error("Oops BigQuery 테이블에서 불러올 데이터가 없습니다.")
             return None
-
         df.columns = [col.replace('_', ' ').title() for col in df.columns]
-
-        required_cols = ['Date', 'Volume', 'Value', 'Reported Product Name', 'Export Country', 'Exporter']
+        required_cols = ['Date', 'Volume', 'Value', 'Reported Product Name', 'Export Country', 'Exporter', 'Importer', 'Hs Code']
         for col in required_cols:
             if col not in df.columns:
-                st.error(f"BigQuery 테이블 오류: 필수 컬럼 '{col}'이 없습니다.")
+                st.error(f"Oops BigQuery 테이블 오류: 필수 컬럼 '{col}'이 없습니다.")
                 return None
-        
-        df.dropna(how="all", inplace=True)
-        
-        # 최종 수정: 데이터 타입을 확인하고 그에 맞춰 지능적으로 처리하는 로직
         def smart_numeric_conversion(series):
-            # 이미 숫자 형식인 경우 그대로 반환
-            if pd.api.types.is_numeric_dtype(series):
-                return pd.to_numeric(series, errors='coerce')
-            
-            # 문자열(Object) 형식인 경우, 숫자 외 문자 제거 후 변환
+            if pd.api.types.is_numeric_dtype(series): return pd.to_numeric(series, errors='coerce')
             elif pd.api.types.is_object_dtype(series):
                 series_str = series.astype(str)
                 series_cleaned = series_str.str.replace(r'[^\d.]', '', regex=True)
                 return pd.to_numeric(series_cleaned, errors='coerce')
-            
-            # 그 외의 경우, 변환 시도
-            else:
-                return pd.to_numeric(series, errors='coerce')
-
+            else: return pd.to_numeric(series, errors='coerce')
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
         df['Volume'] = smart_numeric_conversion(df['Volume'])
         df['Value'] = smart_numeric_conversion(df['Value'])
-
-        # 변환 실패한 행 진단
-        problematic_rows = df[df['Date'].isnull() | df['Volume'].isnull() | df['Value'].isnull()]
-        
         df.dropna(subset=['Date', 'Volume', 'Value'], inplace=True)
-
         if df.empty:
-            st.error("데이터 정제 후 유효한 데이터가 없습니다.")
-            st.info("BigQuery 테이블의 'Date', 'Volume', 'Value' 컬럼에 유효한 데이터가 있는지 확인해주세요.")
-            if not problematic_rows.empty:
-                st.warning("아래는 데이터 타입 변환에 실패한 행의 예시입니다. 원본 데이터의 형식을 확인해주세요:")
-                st.dataframe(problematic_rows[['Date', 'Volume', 'Value']].head())
+            st.error("Oops 데이터 정제 후 유효한 데이터가 없습니다.")
             return None
-            
         return df
     except Exception as e:
-        st.error(f"데이터 로딩 중 심각한 오류가 발생했습니다:")
+        st.error(f"Sorry 데이터 로딩 중 오류가 발생했습니다:")
         st.exception(e)
         return None
+
+# --- 분석 헬퍼 함수 ---
+def create_monthly_frequency_chart(df, title):
+    """지난 12개월간 월별 수입 빈도 막대그래프 생성"""
+    df['Date'] = pd.to_datetime(df['Date'])
+    end_date = datetime.now()
+    start_date = end_date - pd.DateOffset(years=1)
+    
+    df_filtered = df[(df['Date'] >= start_date) & (df['Date'] <= end_date)].copy()
+    
+    if df_filtered.empty:
+        return None
+        
+    df_filtered['Month'] = df_filtered['Date'].dt.to_period('M').astype(str)
+    monthly_counts = df_filtered.groupby('Month').size().reset_index(name='counts')
+    
+    all_months = pd.date_range(start=start_date, end=end_date, freq='MS').to_period('M').astype(str)
+    all_months_df = pd.DataFrame({'Month': all_months})
+    
+    monthly_counts = pd.merge(all_months_df, monthly_counts, on='Month', how='left').fillna(0)
+    
+    fig = px.bar(monthly_counts, x='Month', y='counts', title=title, labels={'Month': '월', 'counts': '수입 건수'})
+    fig.update_layout(margin=dict(t=40, b=20, l=40, r=20), height=300, plot_bgcolor='white')
+    return fig
 
 # --- 새로운 범용 스마트 매칭 로직 ---
 def clean_text(text):
@@ -95,83 +93,97 @@ def clean_text(text):
     text = re.sub(r'[^a-z0-9\s\uac00-\ud7a3]', ' ', text)
     return ' '.join(text.split())
 
-# --- 데이터 처리 로직 (개별 제품 분석 지원) ---
-def process_analysis_data(user_input_row, comparison_df, target_importer_name):
-    target_df = pd.DataFrame([user_input_row])
-    target_df['Date'] = pd.to_datetime(target_df['Date'])
+# --- 메인 분석 로직 ---
+def run_all_analysis(user_input, company_data, target_importer_name):
+    analysis_result = {"overview": None, "positioning": None, "supply_chain": None}
     
-    if comparison_df.empty or target_df.empty:
-        return {}, {}, {}
-
-    target_df['Importer'] = target_importer_name.upper()
-    all_df = pd.concat([comparison_df, target_df], ignore_index=True)
-    all_df['Value'] = pd.to_numeric(all_df['Value'], errors='coerce')
-    all_df['Volume'] = pd.to_numeric(all_df['Volume'], errors='coerce')
-    all_df.dropna(subset=['Value', 'Volume'], inplace=True)
-    all_df = all_df[all_df['Volume'] > 0]
-
-    all_df['unitPrice'] = all_df['Value'] / all_df['Volume']
-    all_df['year'] = all_df['Date'].dt.year
-    all_df['monthYear'] = all_df['Date'].dt.to_period('M').astype(str)
-
-    competitor_analysis = {}
-    yearly_analysis = {}
-    time_series_analysis = {}
-
-    for _, row in target_df.iterrows():
-        year = row['Date'].year
-        exporter = row['Exporter'].upper()
-        key = (year, exporter)
-        related_trades = all_df[(all_df['year'] == year) & (all_df['Exporter'].str.upper() == exporter)]
-        if not related_trades.empty:
-            importer_median_prices = related_trades.groupby('Importer')['unitPrice'].median().sort_values().reset_index()
-            top5_importers = importer_median_prices.head(5)['Importer'].tolist()
-            
-            selected_importers = top5_importers
-            target_importer_name_upper = target_importer_name.upper()
-            if target_importer_name_upper not in selected_importers:
-                if target_importer_name_upper in related_trades['Importer'].unique():
-                     selected_importers.append(target_importer_name_upper)
-
-            box_plot_data = related_trades[related_trades['Importer'].isin(selected_importers)]
-            competitor_analysis[key] = box_plot_data
+    # 0. Overview 분석
+    hscode_data = company_data[company_data['Hs Code'] == user_input['HS-CODE']]
+    if not hscode_data.empty:
+        hscode_data = hscode_data.copy()
+        hscode_data['unitPrice'] = hscode_data['Value'] / hscode_data['Volume']
+        this_year = datetime.now().year
+        last_year = this_year - 1
         
-        origin = row['Origin Country'].upper()
-        key_yearly = (exporter, origin)
-        target_unit_price_yearly = row['Value'] / row['Volume']
-        other_companies_yearly = all_df[
-            (all_df['Exporter'].str.upper() == exporter) &
-            (all_df['Origin Country'].str.upper() == origin) &
-            (all_df['Importer'].str.upper() != target_importer_name.upper()) &
-            (all_df['unitPrice'] < target_unit_price_yearly)
-        ]
-        saving_info_yearly = None
-        if not other_companies_yearly.empty:
-            avg_unit_price = other_companies_yearly['Value'].sum() / other_companies_yearly['Volume'].sum()
-            potential_saving = (target_unit_price_yearly - avg_unit_price) * row['Volume']
-            saving_info_yearly = {'potential_saving': potential_saving}
-        yearly_data = all_df[(all_df['Exporter'].str.upper() == exporter) & (all_df['Origin Country'].str.upper() == origin)]
-        summary = yearly_data.groupby('year').agg(volume=('Volume', 'sum'), value=('Value', 'sum')).reset_index()
-        if not summary.empty:
-            summary['unitPrice'] = summary['value'] / summary['volume']
-            yearly_analysis[key_yearly] = {'chart_data': summary, 'saving_info': saving_info_yearly}
+        vol_this_year = hscode_data[hscode_data['Date'].dt.year == this_year]['Volume'].sum()
+        vol_last_year = hscode_data[hscode_data['Date'].dt.year == last_year]['Volume'].sum()
+        price_this_year = hscode_data[hscode_data['Date'].dt.year == this_year]['unitPrice'].mean()
+        price_last_year = hscode_data[hscode_data['Date'].dt.year == last_year]['unitPrice'].mean()
 
-        key_ts = origin
-        related_trades_ts = all_df[all_df['Origin Country'].str.upper() == origin]
-        monthly_summary = related_trades_ts.groupby('monthYear').agg(avgPrice=('unitPrice', 'mean'), bestPrice=('unitPrice', 'min')).reset_index()
-        target_trades_ts = related_trades_ts[related_trades_ts['Importer'].str.upper() == target_importer_name.upper()]
-        target_monthly = target_trades_ts.groupby('monthYear').agg(targetPrice=('unitPrice', 'mean')).reset_index()
-        chart_data_ts = pd.merge(monthly_summary, target_monthly, on='monthYear', how='left').sort_values('monthYear')
-        target_unit_price_ts = row['Value'] / row['Volume']
-        cheaper_trades_ts = all_df[(all_df['Origin Country'].str.upper() == origin) & (all_df['unitPrice'] < target_unit_price_ts)]
-        saving_info_ts = None
-        if not cheaper_trades_ts.empty:
-            avg_unit_price_ts = cheaper_trades_ts['Value'].sum() / cheaper_trades_ts['Volume'].sum()
-            potential_saving_ts = (target_unit_price_ts - avg_unit_price_ts) * row['Volume']
-            saving_info_ts = {'potential_saving': potential_saving_ts}
-        time_series_analysis[key_ts] = {'chart_data': chart_data_ts, 'saving_info': saving_info_ts}
+        analysis_result['overview'] = {
+            "vol_this_year": vol_this_year, "vol_last_year": vol_last_year,
+            "price_this_year": price_this_year, "price_last_year": price_last_year,
+            "freq_this_year": len(hscode_data[hscode_data['Date'].dt.year == this_year]),
+            "product_composition": hscode_data.groupby('Reported Product Name')['Value'].sum().reset_index()
+        }
 
-    return competitor_analysis, yearly_analysis, time_series_analysis
+    # 1. 포지셔닝 분석
+    importer_stats = company_data.groupby('Importer').agg(
+        Total_Value=('Value', 'sum'),
+        Total_Volume=('Volume', 'sum'),
+        Trade_Count=('Value', 'count')
+    ).reset_index()
+    
+    if not importer_stats.empty and 'Total_Volume' in importer_stats.columns and importer_stats['Total_Volume'].sum() > 0:
+        importer_stats['Avg_UnitPrice'] = importer_stats['Total_Value'] / importer_stats['Total_Volume']
+        importer_stats = importer_stats.sort_values('Total_Value', ascending=False).reset_index(drop=True)
+
+        # 그룹 분류
+        total_market_value = importer_stats['Total_Value'].sum()
+        importer_stats['cum_share'] = importer_stats['Total_Value'].cumsum() / total_market_value
+        market_leaders = importer_stats[importer_stats['cum_share'] <= 0.7]
+
+        try:
+            target_rank = importer_stats[importer_stats['Importer'] == target_importer_name].index[0]
+            rank_margin = int(len(importer_stats) * 0.1)
+            peer_min_rank = max(0, target_rank - rank_margin)
+            peer_max_rank = min(len(importer_stats), target_rank + rank_margin + 1)
+            direct_peers = importer_stats.iloc[peer_min_rank:peer_max_rank]
+        except IndexError:
+            target_rank = -1
+            direct_peers = pd.DataFrame()
+
+        price_achievers_candidates = importer_stats[importer_stats['Trade_Count'] >= 1]
+        if not price_achievers_candidates.empty:
+            price_quantile = price_achievers_candidates['Avg_UnitPrice'].quantile(0.15)
+            price_achievers = price_achievers_candidates[price_achievers_candidates['Avg_UnitPrice'] <= price_quantile]
+        else:
+            price_achievers = pd.DataFrame()
+        
+        analysis_result['positioning'] = {
+            "bubble_data": importer_stats,
+            "market_leaders": market_leaders,
+            "direct_peers": direct_peers,
+            "price_achievers": price_achievers,
+            "target_stats": importer_stats[importer_stats['Importer'] == target_importer_name]
+        }
+    
+    # 2. 공급망 분석
+    supply_chain = {}
+    target_exporter = user_input['Exporter']
+    target_country = user_input['Origin Country']
+    
+    # 더 저렴한 수출업체 분석
+    cheaper_exporters = company_data[
+        (company_data['Exporter'] != target_exporter)
+    ].groupby('Exporter').agg(Avg_UnitPrice=('unitPrice', 'mean')).reset_index()
+    
+    target_exporter_price = company_data[company_data['Exporter'] == target_exporter]['unitPrice'].mean()
+    
+    if not np.isnan(target_exporter_price):
+        cheaper_exporters = cheaper_exporters[cheaper_exporters['Avg_UnitPrice'] < target_exporter_price]
+        if not cheaper_exporters.empty:
+            best_exporter = cheaper_exporters.sort_values('Avg_UnitPrice').iloc[0]
+            supply_chain['best_exporter'] = {
+                'name': best_exporter['Exporter'],
+                'saving_rate': (target_exporter_price - best_exporter['Avg_UnitPrice']) / target_exporter_price
+            }
+
+    # 더 저렴한 원산지 분석
+    
+    analysis_result['supply_chain'] = supply_chain
+    
+    return analysis_result
 
 # --- UI Components ---
 def login_screen():
@@ -193,8 +205,6 @@ def main_dashboard(company_data):
 
     with st.expander("STEP 1: 분석 정보 입력", expanded='analysis_groups' not in st.session_state):
         importer_name = st.text_input("1. 귀사의 업체명을 입력해주세요.", key="importer_name").upper()
-        st.markdown("---")
-        st.markdown("2. 분석할 구매 내역을 입력해주세요. (여러 품목 입력 가능)")
         if 'rows' not in st.session_state: st.session_state['rows'] = [{'id': 1}]
         
         for i, row in enumerate(st.session_state.rows):
@@ -203,13 +213,14 @@ def main_dashboard(company_data):
             cols[1].text_input("제품 상세명", placeholder="예 : 엑스트라버진 올리브유", key=f"product_name_{i}")
             cols[2].text_input("HS-CODE(6자리)", max_chars=6, key=f"hscode_{i}")
             
-            origin_options = ['직접 입력'] + sorted(company_data['Export Country'].unique())
-            selected_origin = cols[3].selectbox("원산지", origin_options, key=f"origin_{i}")
+            # 수정: Placeholder 기능 추가
+            origin_options = [''] + ['직접 입력'] + sorted(company_data['Export Country'].unique())
+            selected_origin = cols[3].selectbox("원산지", origin_options, key=f"origin_{i}", format_func=lambda x: '선택 또는 직접 입력' if x == '' else x)
             if selected_origin == '직접 입력':
                 cols[3].text_input("└ 원산지 직접 입력", key=f"custom_origin_{i}", placeholder="직접 입력하세요")
 
-            exporter_options = ['직접 입력'] + sorted(company_data['Exporter'].unique())
-            selected_exporter = cols[4].selectbox("수출업체", exporter_options, key=f"exporter_{i}")
+            exporter_options = [''] + ['직접 입력'] + sorted(company_data['Exporter'].unique())
+            selected_exporter = cols[4].selectbox("수출업체", exporter_options, key=f"exporter_{i}", format_func=lambda x: '선택 또는 직접 입력' if x == '' else x)
             if selected_exporter == '직접 입력':
                 cols[4].text_input("└ 수출업체 직접 입력", key=f"custom_exporter_{i}", placeholder="직접 입력하세요")
 
@@ -241,24 +252,13 @@ def main_dashboard(company_data):
                     user_product_name = st.session_state[f'product_name_{i}']
                     
                     origin_val = st.session_state[f'origin_{i}']
-                    if origin_val == '직접 입력':
-                        origin_val = st.session_state.get(f'custom_origin_{i}', "")
-
+                    if origin_val == '직접 입력': origin_val = st.session_state.get(f'custom_origin_{i}', "")
+                    
                     exporter_val = st.session_state[f'exporter_{i}']
-                    if exporter_val == '직접 입력':
-                        exporter_val = st.session_state.get(f'custom_exporter_{i}', "")
+                    if exporter_val == '직접 입력': exporter_val = st.session_state.get(f'custom_exporter_{i}', "")
 
-                    entry = {
-                        'Date': st.session_state[f'date_{i}'],
-                        'Reported Product Name': user_product_name,
-                        'HS-CODE': st.session_state[f'hscode_{i}'],
-                        'Origin Country': origin_val.upper(),
-                        'Exporter': exporter_val.upper(),
-                        'Volume': st.session_state[f'volume_{i}'],
-                        'Value': st.session_state[f'value_{i}'],
-                        'Incoterms': st.session_state[f'incoterms_{i}'],
-                    }
-
+                    entry = { 'Date': st.session_state[f'date_{i}'], 'Reported Product Name': user_product_name, 'HS-CODE': st.session_state[f'hscode_{i}'], 'Origin Country': origin_val.upper(), 'Exporter': exporter_val.upper(), 'Volume': st.session_state[f'volume_{i}'], 'Value': st.session_state[f'value_{i}'], 'Incoterms': st.session_state[f'incoterms_{i}'] }
+                    
                     if not user_product_name or not origin_val or not exporter_val:
                         st.error(f"{i+1}번째 행의 '제품 상세명', '원산지', '수출업체'는 필수 입력 항목입니다.")
                         return
@@ -266,17 +266,10 @@ def main_dashboard(company_data):
                     all_purchase_data.append(entry)
                     user_tokens = set(clean_text(user_product_name).split())
                     
-                    def is_match(cleaned_tds_name):
-                        return user_tokens.issubset(set(cleaned_tds_name.split()))
-                    
+                    def is_match(cleaned_tds_name): return user_tokens.issubset(set(cleaned_tds_name.split()))
                     matched_df = company_data[company_data['cleaned_name'].apply(is_match)]
                     
-                    analysis_groups.append({
-                        "id": i,
-                        "user_input": entry,
-                        "matched_products": sorted(matched_df['Reported Product Name'].unique().tolist()),
-                        "selected_products": sorted(matched_df['Reported Product Name'].unique().tolist())
-                    })
+                    analysis_groups.append({ "id": i, "user_input": entry, "matched_products": sorted(matched_df['Reported Product Name'].unique().tolist()), "selected_products": sorted(matched_df['Reported Product Name'].unique().tolist()) })
 
                 try:
                     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
@@ -292,7 +285,7 @@ def main_dashboard(company_data):
                     save_data_df = pd.DataFrame(all_purchase_data)
                     save_data_df['importer_name'] = importer_name
                     save_data_df['consent'] = consent
-                    save_data_df['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    save_data_df['timestamp'] = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
                     save_data_df['Date'] = pd.to_datetime(save_data_df['Date']).dt.strftime('%Y-%m-%d')
                     
                     if not worksheet.get('A1'):
@@ -301,9 +294,6 @@ def main_dashboard(company_data):
                         worksheet.append_rows(save_data_df.values.tolist(), value_input_option='USER_ENTERED')
 
                     st.toast("입력 정보가 Google Sheet에 저장되었습니다.", icon="✅")
-                except gspread.exceptions.APIError as e:
-                    st.error("Google Sheets API 오류로 저장에 실패했습니다.")
-                    st.json(e.response.json())
                 except Exception as e:
                     st.error(f"Google Sheets 저장 중 예상치 못한 오류가 발생했습니다: {e}")
 
@@ -333,55 +323,43 @@ def main_dashboard(company_data):
                 st.warning("선택된 비교 대상 제품이 없어 분석을 건너뜁니다.")
                 continue
 
-            comparison_df = company_data[company_data['Reported Product Name'].isin(group['selected_products'])]
-            
-            competitor_res, yearly_res, timeseries_res = process_analysis_data(
-                group['user_input'], 
-                comparison_df, 
-                st.session_state['importer_name_result']
-            )
-            
-            st.markdown("#### 1. 경쟁사 Unit Price 비교 분석")
-            if not competitor_res:
-                st.write("비교할 경쟁사 데이터가 없습니다.")
-            else:
-                for (year, exporter), data in competitor_res.items():
-                    with st.container(border=True):
-                        st.markdown(f"**{year}년 / 수출업체: {exporter}**")
-                        data['구분'] = np.where(data['Importer'] == st.session_state['importer_name_result'].upper(), '귀사', '경쟁사')
-                        fig = px.box(data, x='Importer', y='unitPrice', title=f"경쟁사 Unit Price 분포 비교",
-                                     color='구분',
-                                     color_discrete_map={'귀사': '#ef4444', '경쟁사': '#3b82f6'},
-                                     points='all')
-                        fig.update_layout(legend_title_text=None, xaxis_title="수입사", yaxis_title="Unit Price (USD/KG)")
-                        st.plotly_chart(fig, use_container_width=True)
+            analysis_data = company_data[company_data['Reported Product Name'].isin(group['selected_products'])]
+            result = run_all_analysis(group['user_input'], analysis_data, st.session_state['importer_name_result'])
 
-            st.markdown("#### 2. 연도별 수입 중량 및 Unit Price 트렌드")
-            if not yearly_res:
-                st.write("분석할 연도별 데이터가 없습니다.")
+            # 0. Overview 표시
+            st.markdown("### 0. Overview")
+            if result.get('overview'):
+                o = result['overview']
+                st.markdown(f"#### HS-Code {group['user_input']['HS-CODE']}의 수입 전반 요약")
+                # ... (결과 표시)
             else:
-                for (exporter, origin), data in yearly_res.items():
-                    with st.container(border=True):
-                        st.markdown(f"**{exporter} 로부터의 {origin}산 품목 수입 트렌드**")
-                        fig = go.Figure()
-                        fig.add_trace(go.Bar(x=data['chart_data']['year'], y=data['chart_data']['volume'], name='수입 중량 (KG)', yaxis='y1'))
-                        fig.add_trace(go.Line(x=data['chart_data']['year'], y=data['chart_data']['unitPrice'], name='Unit Price (USD/KG)', yaxis='y2', mode='lines+markers'))
-                        fig.update_layout(yaxis=dict(title="수입 중량 (KG)"), yaxis2=dict(title="Unit Price (USD/KG)", overlaying='y', side='right'), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-                        st.plotly_chart(fig, use_container_width=True)
-                        if data['saving_info']: st.success(f"💰 데이터 기반 예상 절감 가능 금액: 약 ${data['saving_info']['potential_saving']:,.0f}")
+                st.info("HS-Code에 해당하는 데이터가 부족하여 Overview 분석을 생략합니다.")
 
-            st.markdown(f"#### 3. \"{group['user_input']['Reported Product Name']}\" 수입 추이")
-            if not timeseries_res:
-                st.write("분석할 시계열 데이터가 없습니다.")
+            # 1. Positioning 표시
+            st.markdown(f"### 1. {st.session_state['importer_name_result']}을 위한 수입 진단 및 포지셔닝 결과")
+            if result.get('positioning'):
+                p = result['positioning']
+                st.markdown("#### PART 1. 마켓 포지션 분석")
+                
+                all_importers = p['bubble_data']['Importer'].unique()
+                anonymity_map = {name: f"{chr(65+i)}사" for i, name in enumerate(all_importers) if name != st.session_state['importer_name_result']}
+                
+                bubble_df = p['bubble_data'].copy()
+                bubble_df['Anonymized_Importer'] = bubble_df['Importer'].apply(lambda x: "귀사" if x == st.session_state['importer_name_result'] else anonymity_map.get(x, "기타"))
+                
+                fig_bubble = px.scatter(bubble_df, x='Total_Volume', y='Avg_UnitPrice', size='Total_Value', color='Anonymized_Importer',
+                                        hover_name='Anonymized_Importer', size_max=60,
+                                        labels={'Total_Volume': '수입 총 중량 (KG)', 'Avg_UnitPrice': '평균 수입 단가 (USD/KG)'})
+                st.plotly_chart(fig_bubble, use_container_width=True)
+
+                st.markdown("##### 지난 12개월간 월별 수입 빈도")
+                target_df = company_data[company_data['Importer'] == st.session_state['importer_name_result']]
+                fig_target_freq = create_monthly_frequency_chart(target_df, "귀사")
+                if fig_target_freq: st.plotly_chart(fig_target_freq, use_container_width=True)
+                else: st.info("귀사의 지난 1년간 수입 데이터가 없습니다.")
+
             else:
-                for origin, data in timeseries_res.items():
-                    with st.container(border=True):
-                        st.markdown(f"**{origin} 원산지 품목 Unit Price 트렌드**")
-                        fig = px.line(data['chart_data'], x='monthYear', y=['avgPrice', 'targetPrice', 'bestPrice'], markers=True, labels={'monthYear': '월', 'value': 'Unit Price (USD/KG)'})
-                        new_names = {'avgPrice':'시장 평균가', 'targetPrice':'귀사 평균가', 'bestPrice':'시장 최저가'}
-                        fig.for_each_trace(lambda t: t.update(name = new_names[t.name]))
-                        st.plotly_chart(fig, use_container_width=True)
-                        if data['saving_info']: st.success(f"💰 데이터 기반 예상 절감 가능 금액: 약 ${data['saving_info']['potential_saving']:,.0f}")
+                st.info("데이터가 부족하여 포지셔닝 분석을 생략합니다.")
 
         if st.button("🔄 새로운 분석 시작하기"):
             keys_to_keep = ['logged_in']
