@@ -238,10 +238,10 @@ def main_dashboard(company_data):
             if ts_res and not ts_res['all_trades'].empty:
                 fig_ts = go.Figure()
                 log_volume = np.log1p(ts_res['all_trades']['volume']); bubble_size = 5 + ((log_volume - log_volume.min()) / (log_volume.max() - log_volume.min())) * 25 if log_volume.max() > log_volume.min() else [5]*len(log_volume)
-                fig_ts.add_trace(go.Scatter(x=ts_res['all_trades']['date'], y=ts_res['all_trades']['unitprice'], mode='markers', marker=dict(size=bubble_size, color='lightgray', opacity=0.6), name='과거 거래 내역', hoverinfo='none'))
+                fig_ts.add_trace(go.Scatter(x=ts_res['all_trades']['date'], y=ts_res['all_trades']['unitprice'], mode='markers', marker=dict(size=bubble_size, color='lightgray', opacity=0.4), name='과거 거래 내역', hoverinfo='none'))
                 fig_ts.add_trace(go.Scatter(x=ts_res['monthly_avg']['date'], y=ts_res['monthly_avg']['unitprice'], mode='lines', line=dict(color='cornflowerblue', width=3), name='월별 시장 평균가'))
                 current_tx = ts_res['current_transaction']; current_bubble_size = 5 + ((np.log1p(current_tx['volume']) - log_volume.min()) / (log_volume.max() - log_volume.min())) * 25 if log_volume.max() > log_volume.min() else 15
-                fig_ts.add_trace(go.Scatter(x=[current_tx['date']], y=[current_tx['unitprice']], mode='markers', marker=dict(symbol='star', color='black', size=current_bubble_size * 1.5, line=dict(color='white', width=2)), name='입력한 거래 내역', hovertemplate='<b>입력한 거래 내역</b><br>단가: $%{y:,.2f}<extra></extra>'))
+                fig_ts.add_trace(go.Scatter(x=[current_tx['date']], y=[current_tx['unitprice']], mode='markers', marker=dict(symbol='circle', color='black', size=current_bubble_size * 1.5, line=dict(color='white', width=2)), name='입력한 거래 내역', hovertemplate='<b>입력한 거래 내역</b><br>단가: $%{y:,.2f}<extra></extra>'))
                 fig_ts.update_layout(title="<b>시기별 거래 동향 및 시장가 비교</b>", xaxis_title="거래 시점", yaxis_title="거래 단가 (USD/KG)", showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                 st.plotly_chart(fig_ts, use_container_width=True)
             st.markdown("---")
