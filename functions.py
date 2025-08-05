@@ -114,7 +114,7 @@ def run_all_analysis(user_input, full_company_data, selected_products, target_im
             price_achievers_candidates = importer_stats[importer_stats['Trade_Count'] >= 2]
             price_achievers_df = price_achievers_candidates[price_achievers_candidates['Avg_UnitPrice'] <= price_achievers_candidates['Avg_UnitPrice'].quantile(0.15)] if not price_achievers_candidates.empty else pd.DataFrame()
             analysis_result['positioning'] = {"bubble_data": importer_stats, "groups": {"Market Leaders": market_leaders_df, "Direct Peers": direct_peers_df, "Price Achievers": price_achievers_df}, "target_stats": importer_stats[importer_stats['importer'] == target_importer_name]}
-        target_exporter, target_country = user_input.get('Exporter', '').upper(), user_input.get('Origin Country', '').upper()
+        target_exporter = user_input.get('Exporter', '').upper()
         if target_exporter:
             same_exporter_df = analysis_data[analysis_data['exporter'] == target_exporter]
             analysis_result['supply_chain']['same_exporter_stats'] = same_exporter_df.groupby('importer').agg(Total_Volume=('volume', 'sum'), Avg_UnitPrice=('unitPrice', 'mean')).reset_index()
@@ -147,7 +147,7 @@ def main_dashboard(company_data):
         for i, row in enumerate(st.session_state.rows):
             st.markdown(f"**수입 내역 {i+1}**")
             cols = st.columns([1.5, 3, 1, 2, 2, 1, 1, 1])
-            cols[0].date_input(f"수입일_{i+1}", key=f"date_{i}", label_visibility="collapsed", value=datetime(2025, 8, 5))
+            cols[0].date_input(f"수입일_{i+1}", key=f"date_{i}", label_visibility="collapsed", value=datetime.now())
             cols[1].text_input(f"제품상세명_{i+1}", placeholder="제품 상세명", key=f"product_name_{i}", label_visibility="collapsed")
             cols[2].text_input(f"HSCODE_{i+1}", max_chars=6, key=f"hscode_{i}", placeholder="HS-CODE", label_visibility="collapsed")
             origin_options = [''] + ['직접 입력'] + sorted(company_data['export_country'].unique())
@@ -158,16 +158,38 @@ def main_dashboard(company_data):
             selected_exporter = cols[4].selectbox(f"수출업체_{i+1}", exporter_options, key=f"exporter_{i}", label_visibility="collapsed", format_func=lambda x: '수출업체 선택' if x == '' else x)
             if selected_exporter == '직접 입력': st.session_state[f'final_exporter_{i}'] = cols[4].text_input(f"수출업체직접_{i+1}", key=f"custom_exporter_{i}", label_visibility="collapsed", placeholder="수출업체 직접 입력")
             else: st.session_state[f'final_exporter_{i}'] = selected_exporter
-            cols[5].number_input(f"수입중량_{i+1}", min_value=0.01, format="%.2f", key=f"volume_{i}", label_visibility="collapsed", placeholder="수입 중량(KG)")
-            cols[6].number_input(f"수입금액_{i+1}", min_value=0.01, format="%.2f", key=f"value_{i}", label_visibility="collapsed", placeholder="총 수입금액(USD)")
+            cols[5].number_input(f"수입중량_{i+1}", min_value=0.01, format="%.2f", key=f"volume_{i}", label_visibility="collapsed", help="수입 중량(KG)")
+            cols[6].number_input(f"수입금액_{i+1}", min_value=0.01, format="%.2f", key=f"value_{i}", label_visibility="collapsed", help="총 수입금액(USD)")
             if len(st.session_state.rows) > 1 and cols[7].button("삭제", key=f"delete_{i}"):
                 st.session_state.rows.pop(i); st.rerun()
         if st.button("➕ 내역 추가하기"):
             st.session_state.rows.append({'id': len(st.session_state.rows) + 1}); st.rerun()
         st.markdown("---")
+        consent = st.checkbox("입력하신 정보는 데이터 분석 품질 향상을 위해 저장 및 활용되는 것에 동의합니다.", value=True)
         if st.button("분석하기", type="primary", use_container_width=True):
+            if not consent:
+                st.warning("정보 활용 동의에 체크해주세요."); st.stop()
             with st.spinner('데이터를 분석하고 있습니다...'):
-                # ... (입력값 검증 및 그룹 생성 로직) ...
+                all_purchase_data = []
+                for i in range(len(st.session_state.rows)):
+                    entry = {'Date': st.session_state.get(f'date_{i}'), 'Reported Product Name': st.session_state.get(f'product_name_{i}', ''), 'HS-CODE': st.session_state.get(f'hscode_{i}', ''), 'Origin Country': st.session_state.get(f'final_origin_{i}', '').upper(), 'Exporter': st.session_state.get(f'final_exporter_{i}', '').upper(), 'Volume': st.session_state.get(f'volume_{i}', 0), 'Value': st.session_state.get(f'value_{i}', 0)}
+                    if not all([entry['Date'], entry['Reported Product Name'], entry['HS-CODE'], entry['Origin Country'], entry['Exporter'], entry['Volume'] > 0, entry['Value'] > 0]):
+                        st.error(f"수입 내역 {i+1}의 모든 값을 정확히 입력해주세요."); return
+                    all_purchase_data.append(entry)
+                purchase_df = pd.DataFrame(all_purchase_data)
+                agg_funcs = {'Date': 'first', 'Volume': 'sum', 'Value': 'sum', 'HS-CODE': 'first', 'Origin Country': 'first', 'Exporter': 'first'}
+                aggregated_purchase_df = purchase_df.groupby('Reported Product Name').agg(agg_funcs).reset_index()
+                analysis_groups = []
+                company_data['cleaned_name'] = company_data['reported_product_name'].apply(clean_text)
+                for i, row in aggregated_purchase_df.iterrows():
+                    entry = row.to_dict()
+                    user_tokens = set(clean_text(entry['Reported Product Name']).split())
+                    # *** 중요 버그 수정: 제품명 비교 로직 ***
+                    is_match = lambda cleaned_tds_name: user_tokens.issubset(set(cleaned_tds_name.split()))
+                    matched_df = company_data[company_data['cleaned_name'].apply(is_match)]
+                    analysis_groups.append({ "id": i, "user_input": entry, "matched_products": sorted(matched_df['reported_product_name'].unique().tolist()), "selected_products": sorted(matched_df['reported_product_name'].unique().tolist()) })
+                st.session_state['importer_name_result'] = importer_name
+                st.session_state['analysis_groups'] = analysis_groups
                 st.rerun()
 
     if 'analysis_groups' in st.session_state:
@@ -194,7 +216,6 @@ def main_dashboard(company_data):
         for group in st.session_state.analysis_groups:
             st.subheader(f"분석 결과: \"{group['user_input']['Reported Product Name']}\"")
             if not group['selected_products']: st.warning("선택된 제품이 없어 상세 분석을 건너뜁니다."); continue
-            
             result = run_all_analysis(group['user_input'], company_data, group['selected_products'], st.session_state.get('importer_name_result', ''))
             if not result.get('positioning'): st.info("선택된 제품군에 대한 데이터가 부족하여 상세 분석을 진행할 수 없습니다."); continue
             
@@ -205,8 +226,8 @@ def main_dashboard(company_data):
             if p['bubble_data'].empty: st.info("포지션 맵을 그리기 위한 데이터가 충분하지 않습니다.")
             else:
                 bubble_df = p['bubble_data'].copy()
-                all_importers = bubble_df['importer'].unique()
                 target_name = st.session_state.get('importer_name_result', '')
+                all_importers = bubble_df['importer'].unique()
                 anonymity_map = {name: f"{get_excel_col_name(i)}사" for i, name in enumerate(all_importers) if name != target_name}
                 anonymity_map[target_name] = "귀사"
                 bubble_df['Anonymized_Importer'] = bubble_df['importer'].apply(lambda x: anonymity_map.get(x, "기타"))
@@ -221,9 +242,8 @@ def main_dashboard(company_data):
             groups_data = {name: analysis_data_pos[analysis_data_pos['importer'].isin(df['importer'])] for name, df in p['groups'].items() if not df.empty}
             group_names_map = {"Market Leaders": "시장 선도 그룹", "Direct Peers": "유사 규모 경쟁 그룹", "Price Achievers": "최저가 달성 그룹"}
             cols = st.columns(2)
-            col_map = {0: cols[0], 1: cols[1], 2: cols[0], 3: cols[1]}
             for i, (key, name) in enumerate(group_names_map.items()):
-                with col_map[i]:
+                with cols[i % 2]:
                     if key in groups_data:
                         fig = create_monthly_frequency_bar_chart(groups_data[key], name)
                         if fig: st.plotly_chart(fig, use_container_width=True)
