@@ -150,7 +150,30 @@ def run_all_analysis(user_input, company_data, target_importer_name):
         }
     
     # 2. 공급망 분석
-    # ... (생략)
+    supply_chain = {}
+    target_exporter = user_input['Exporter']
+    target_country = user_input['Origin Country']
+    
+    # 더 저렴한 수출업체 분석
+    cheaper_exporters = company_data[
+        (company_data['exporter'] != target_exporter)
+    ].groupby('exporter').agg(Avg_UnitPrice=('unitPrice', 'mean')).reset_index()
+    
+    target_exporter_price = company_data[company_data['exporter'] == target_exporter]['unitPrice'].mean()
+    
+    if not np.isnan(target_exporter_price):
+        cheaper_exporters = cheaper_exporters[cheaper_exporters['Avg_UnitPrice'] < target_exporter_price]
+        if not cheaper_exporters.empty:
+            best_exporter = cheaper_exporters.sort_values('Avg_UnitPrice').iloc[0]
+            supply_chain['best_exporter'] = {
+                'name': best_exporter['exporter'],
+                'saving_rate': (target_exporter_price - best_exporter['Avg_UnitPrice']) / target_exporter_price
+            }
+
+    # 더 저렴한 원산지 분석
+    # ... (유사 로직)
+    
+    analysis_result['supply_chain'] = supply_chain
     
     return analysis_result
 
@@ -238,8 +261,29 @@ def main_dashboard(company_data):
                     analysis_groups.append({ "id": i, "user_input": entry, "matched_products": sorted(matched_df['reported_product_name'].unique().tolist()), "selected_products": sorted(matched_df['reported_product_name'].unique().tolist()) })
 
                 try:
-                    # ... (Google Sheets 저장 로직) ...
-                    pass
+                    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+                    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+                    client = gspread.authorize(creds)
+                    spreadsheet = client.open("DEMO_app_DB")
+                    
+                    try:
+                        worksheet = spreadsheet.worksheet("Customer_input")
+                    except gspread.exceptions.WorksheetNotFound:
+                        worksheet = spreadsheet.add_worksheet(title="Customer_input", rows=1, cols=20)
+
+                    save_data_df = pd.DataFrame(all_purchase_data)
+                    save_data_df['importer_name'] = importer_name
+                    save_data_df['consent'] = consent
+                    save_data_df['timestamp'] = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
+                    
+                    save_data_df = save_data_df.astype(str)
+                    
+                    if not worksheet.get('A1'):
+                        worksheet.update([save_data_df.columns.values.tolist()] + save_data_df.values.tolist(), value_input_option='USER_ENTERED')
+                    else:
+                        worksheet.append_rows(save_data_df.values.tolist(), value_input_option='USER_ENTERED')
+
+                    st.toast("입력 정보가 Google Sheet에 저장되었습니다.", icon="✅")
                 except Exception as e:
                     st.error(f"Google Sheets 저장 중 예상치 못한 오류가 발생했습니다: {e}")
 
@@ -298,7 +342,6 @@ def main_dashboard(company_data):
                                         labels={'Total_Volume': '수입 총 중량 (KG)', 'Avg_UnitPrice': '평균 수입 단가 (USD/KG)'})
                 st.plotly_chart(fig_bubble, use_container_width=True)
                 
-                # 메트릭 추가
                 st.markdown("##### 요약 인사이트")
                 col1, col2, col3 = st.columns(3)
                 market_avg_price = p['bubble_data']['Avg_UnitPrice'].mean()
