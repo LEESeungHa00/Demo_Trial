@@ -17,36 +17,57 @@ st.set_page_config(layout="wide", page_title="수입 경쟁력 진단 솔루션"
 def load_company_data():
     """Google BigQuery에서 TDS를 불러옵니다."""
     try:
+        st.info("1. Secrets 설정 파일 확인 중...")
         if "gcp_service_account" not in st.secrets:
             st.error("Secrets 설정 오류: `secrets.toml` 파일에 [gcp_service_account] 섹션이 없습니다.")
-            return None
+            st.stop()
 
         creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
         project_id = st.secrets["gcp_service_account"]["project_id"]
-        
+        st.success("   - Secrets 확인 완료.")
+
+        st.info("2. BigQuery 테이블 정보 설정 중...")
         dataset_id = "demo_data" 
         table_id = "tds_data"   
         table_full_id = f"{project_id}.{dataset_id}.{table_id}"
         dataset_location = "asia-northeast3" 
+        st.info(f"   - 테이블 경로: `{table_full_id}`")
+        st.info(f"   - 데이터 위치: `{dataset_location}`")
 
+        st.info("3. BigQuery에 데이터 쿼리 요청 중... (이 단계에서 멈추면 권한 또는 경로 문제입니다)")
         query = f"SELECT * FROM `{table_full_id}`"
-        df = read_gbq(query, project_id=project_id, credentials=creds, location=dataset_location)
         
-        # 최종 수정: BigQuery 컬럼명의 underscore를 공백으로 바꾸고, 모두 Title Case로 통일하여 대소문자 문제 해결
-        df.columns = [col.replace('_', ' ').title() for col in df.columns]
+        df = read_gbq(query, project_id=project_id, credentials=creds, location=dataset_location)
+        st.success(f"   - 쿼리 성공! {len(df)}개의 행을 불러왔습니다.")
+        
+        if df.empty:
+            st.error("BigQuery 테이블에서 데이터를 불러왔지만 비어있습니다.")
+            st.info("BigQuery의 `tds_data` 테이블에 데이터가 올바르게 업로드되었는지 확인해주세요.")
+            return None
 
+        st.info("4. 컬럼명 보정 및 확인 중...")
+        df.columns = [col.replace('_', ' ').title() for col in df.columns]
+        
         required_cols = ['Date', 'Volume', 'Value', 'Reported Product Name', 'Export Country', 'Exporter']
         for col in required_cols:
             if col not in df.columns:
-                st.error(f"BigQuery 테이블 오류: 필수 컬럼 '{col}'이 없습니다.")
+                st.error(f"BigQuery 테이블 오류: 필수 컬럼 '{col}'을(를) 찾을 수 없습니다.")
                 st.info(f"실제 테이블 컬럼명: {df.columns.tolist()}")
                 return None
+        st.success("   - 컬럼명 확인 완료.")
 
+        st.info("5. 데이터 최종 정제 중...")
         df.dropna(how="all", inplace=True)
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
         df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce')
         df['Value'] = pd.to_numeric(df['Value'], errors='coerce')
         df.dropna(subset=['Date', 'Volume', 'Value'], inplace=True)
+
+        if df.empty:
+            st.error("데이터 정제 후 남은 데이터가 없습니다.")
+            return None
+        
+        st.success("데이터 로딩이 성공적으로 완료되었습니다!")
         return df
     except Exception as e:
         st.error(f"데이터 로딩 중 심각한 오류가 발생했습니다:")
@@ -170,13 +191,11 @@ def main_dashboard(company_data):
             cols[1].text_input("제품 상세명", placeholder="예 : 엑스트라버진 올리브유", key=f"product_name_{i}")
             cols[2].text_input("HS-CODE(6자리)", max_chars=6, key=f"hscode_{i}")
             
-            # 원산지 입력 (직접 입력 기능 추가)
             origin_options = ['직접 입력'] + sorted(company_data['Export Country'].unique())
             selected_origin = cols[3].selectbox("원산지", origin_options, key=f"origin_{i}")
             if selected_origin == '직접 입력':
                 cols[3].text_input("└ 원산지 직접 입력", key=f"custom_origin_{i}", placeholder="직접 입력하세요")
 
-            # 수출업체 입력 (직접 입력 기능 추가)
             exporter_options = ['직접 입력'] + sorted(company_data['Exporter'].unique())
             selected_exporter = cols[4].selectbox("수출업체", exporter_options, key=f"exporter_{i}")
             if selected_exporter == '직접 입력':
@@ -209,12 +228,10 @@ def main_dashboard(company_data):
                 for i in range(len(st.session_state.rows)):
                     user_product_name = st.session_state[f'product_name_{i}']
                     
-                    # 원산지 값 가져오기
                     origin_val = st.session_state[f'origin_{i}']
                     if origin_val == '직접 입력':
                         origin_val = st.session_state.get(f'custom_origin_{i}', "")
 
-                    # 수출업체 값 가져오기
                     exporter_val = st.session_state[f'exporter_{i}']
                     if exporter_val == '직접 입력':
                         exporter_val = st.session_state.get(f'custom_exporter_{i}', "")
@@ -230,7 +247,6 @@ def main_dashboard(company_data):
                         'Incoterms': st.session_state[f'incoterms_{i}'],
                     }
 
-                    # 유효성 검사
                     if not user_product_name or not origin_val or not exporter_val:
                         st.error(f"{i+1}번째 행의 '제품 상세명', '원산지', '수출업체'는 필수 입력 항목입니다.")
                         return
