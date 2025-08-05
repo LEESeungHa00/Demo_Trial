@@ -148,24 +148,31 @@ def main_dashboard(company_data):
     with st.expander("STEP 1: 분석 정보 입력", expanded='analysis_groups' not in st.session_state):
         importer_name = st.text_input("1. 귀사의 업체명을 입력해주세요.", key="importer_name").upper()
         if 'rows' not in st.session_state: st.session_state['rows'] = [{'id': 1}]
+        
+        # *** 입력 폼 헤더 표시 수정 ***
+        header_cols = st.columns([1.5, 3, 1, 2, 2, 1, 1, 1])
+        headers = ["수입일", "제품 상세명", "HS-CODE", "원산지", "수출업체", "수입 중량(KG)", "총 수입금액(USD)", "삭제"]
+        for col, header in zip(header_cols, headers):
+            col.markdown(f"**{header}**")
+
         for i, row in enumerate(st.session_state.rows):
-            st.markdown(f"**수입 내역 {i+1}**")
             cols = st.columns([1.5, 3, 1, 2, 2, 1, 1, 1])
-            cols[0].date_input(f"수입일_{i+1}", key=f"date_{i}", label_visibility="collapsed", value=datetime.now())
-            cols[1].text_input(f"제품상세명_{i+1}", placeholder="제품 상세명", key=f"product_name_{i}", label_visibility="collapsed")
-            cols[2].text_input(f"HSCODE_{i+1}", max_chars=6, key=f"hscode_{i}", placeholder="HS-CODE", label_visibility="collapsed")
+            cols[0].date_input(f"date_{i}", key=f"date_{i}", label_visibility="collapsed", value=datetime.now())
+            cols[1].text_input(f"product_name_{i}", key=f"product_name_{i}", label_visibility="collapsed")
+            cols[2].text_input(f"hscode_{i}", max_chars=6, key=f"hscode_{i}", label_visibility="collapsed")
             origin_options = [''] + ['직접 입력'] + sorted(company_data['export_country'].unique())
-            selected_origin = cols[3].selectbox(f"원산지_{i+1}", origin_options, key=f"origin_{i}", label_visibility="collapsed", format_func=lambda x: '원산지 선택' if x == '' else x)
-            if selected_origin == '직접 입력': st.session_state[f'final_origin_{i}'] = cols[3].text_input(f"원산지직접_{i+1}", key=f"custom_origin_{i}", label_visibility="collapsed", placeholder="원산지 직접 입력")
+            selected_origin = cols[3].selectbox(f"origin_{i}", origin_options, key=f"origin_{i}", label_visibility="collapsed", format_func=lambda x: '선택' if x == '' else x)
+            if selected_origin == '직접 입력': st.session_state[f'final_origin_{i}'] = cols[3].text_input(f"custom_origin_{i}", key=f"custom_origin_{i}", label_visibility="collapsed", placeholder="직접 입력")
             else: st.session_state[f'final_origin_{i}'] = selected_origin
             exporter_options = [''] + ['직접 입력'] + sorted(company_data['exporter'].unique())
-            selected_exporter = cols[4].selectbox(f"수출업체_{i+1}", exporter_options, key=f"exporter_{i}", label_visibility="collapsed", format_func=lambda x: '수출업체 선택' if x == '' else x)
-            if selected_exporter == '직접 입력': st.session_state[f'final_exporter_{i}'] = cols[4].text_input(f"수출업체직접_{i+1}", key=f"custom_exporter_{i}", label_visibility="collapsed", placeholder="수출업체 직접 입력")
+            selected_exporter = cols[4].selectbox(f"exporter_{i}", exporter_options, key=f"exporter_{i}", label_visibility="collapsed", format_func=lambda x: '선택' if x == '' else x)
+            if selected_exporter == '직접 입력': st.session_state[f'final_exporter_{i}'] = cols[4].text_input(f"custom_exporter_{i}", key=f"custom_exporter_{i}", label_visibility="collapsed", placeholder="직접 입력")
             else: st.session_state[f'final_exporter_{i}'] = selected_exporter
-            cols[5].number_input(f"수입중량_{i+1}", min_value=0.01, format="%.2f", key=f"volume_{i}", label_visibility="collapsed", placeholder="수입 중량(KG)")
-            cols[6].number_input(f"수입금액_{i+1}", min_value=0.01, format="%.2f", key=f"value_{i}", label_visibility="collapsed", placeholder="총 수입금액(USD)")
+            cols[5].number_input(f"volume_{i}", min_value=0.01, format="%.2f", key=f"volume_{i}", label_visibility="collapsed")
+            cols[6].number_input(f"value_{i}", min_value=0.01, format="%.2f", key=f"value_{i}", label_visibility="collapsed")
             if len(st.session_state.rows) > 1 and cols[7].button("삭제", key=f"delete_{i}"):
                 st.session_state.rows.pop(i); st.rerun()
+
         if st.button("➕ 내역 추가하기"):
             st.session_state.rows.append({'id': len(st.session_state.rows) + 1}); st.rerun()
         st.markdown("---")
@@ -206,7 +213,10 @@ def main_dashboard(company_data):
                 st.markdown(f"#### HS-Code: {hscode}")
                 if 'overview' in result_overview and result_overview['overview']:
                     o = result_overview['overview']
-                    cols = st.columns(3); cols[0].metric(f"{o['this_year']}년 수입 중량 (KG)", f"{o['vol_this_year']:,.0f}", f"{o['vol_yoy']:.1%}" if pd.notna(o['vol_yoy']) else "N/A", delta_color="inverse"); cols[1].metric(f"{o['this_year']}년 평균 단가 (USD/KG)", f"${o['price_this_year']:.2f}", f"{o['price_yoy']:.1%}" if pd.notna(o['price_yoy']) else "N/A", delta_color="inverse"); cols[2].metric("평균 수입 주기", f"{o['avg_total_cycle']:.1f} 일" if pd.notna(o['avg_total_cycle']) else "N/A", help="해당 HS-Code를 수입하는 모든 업체의 평균적인 거래 간격입니다.")
+                    cols = st.columns(3)
+                    cols[0].metric(f"{o['this_year']}년 수입 중량 (KG)", f"{o['vol_this_year']:,.0f}", f"전년 대비 {o['vol_yoy']:.1%}" if pd.notna(o['vol_yoy']) else "N/A", delta_color="inverse")
+                    cols[1].metric(f"{o['this_year']}년 평균 단가 (USD/KG)", f"${o['price_this_year']:.2f}", f"전년 대비 {o['price_yoy']:.1%}" if pd.notna(o['price_yoy']) else "N/A", delta_color="inverse")
+                    cols[2].metric("평균 수입 주기", f"{o['avg_total_cycle']:.1f} 일" if pd.notna(o['avg_total_cycle']) else "N/A", help="해당 HS-Code를 수입하는 모든 업체의 평균적인 거래 간격입니다.")
                 else: st.info(f"HS-Code {hscode}에 대한 데이터가 부족하여 Overview 분석을 생략합니다.")
         st.markdown("---")
         
@@ -222,14 +232,27 @@ def main_dashboard(company_data):
             result = run_all_analysis(group['user_input'], company_data, selected, st.session_state.get('importer_name_result', ''))
             if not result.get('positioning'): st.info("선택된 제품군에 대한 데이터가 부족하여 상세 분석을 진행할 수 없습니다."); st.markdown("---"); continue
             
-            p = result['positioning']; analysis_data_pos = company_data[company_data['reported_product_name'].isin(selected)]
-            target_name = st.session_state.get('importer_name_result', ''); all_importers_in_stats = p['bubble_data']['importer'].unique()
-            anonymity_map = {name: f"{get_excel_col_name(i)}사" for i, name in enumerate(all_importers_in_stats) if name != target_name}; anonymity_map[target_name] = "귀사"
+            p = result['positioning']
+            analysis_data_pos = company_data[company_data['reported_product_name'].isin(selected)].copy()
+            if not analysis_data_pos.empty:
+                analysis_data_pos.loc[:, 'unitPrice'] = analysis_data_pos['value'] / analysis_data_pos['volume']
+            target_name = st.session_state.get('importer_name_result', '')
+            
             st.markdown("#### PART 1. 마켓 포지션 분석")
             if p['bubble_data'].empty: st.info("포지션 맵을 그리기 위한 데이터가 충분하지 않습니다.")
             else:
-                bubble_df = p['bubble_data'].copy(); bubble_df['Anonymized_Importer'] = bubble_df['importer'].apply(lambda x: anonymity_map.get(x, "기타"))
-                st.plotly_chart(px.scatter(bubble_df, x='Total_Volume', y='Avg_UnitPrice', size='Total_Value', color='Anonymized_Importer', log_x=True, hover_name='Anonymized_Importer', title="수입사 포지셔닝 맵"), use_container_width=True)
+                bubble_data_full = p['bubble_data'].copy()
+                target_row = bubble_data_full[bubble_data_full['importer'] == target_name]
+                top_10 = bubble_data_full.nlargest(10, 'Total_Value')
+                plot_df = pd.concat([target_row, top_10]).drop_duplicates().reset_index(drop=True)
+                
+                all_importers_in_plot = plot_df['importer'].unique()
+                anonymity_map = {name: f"{get_excel_col_name(i)}사" for i, name in enumerate(all_importers_in_plot) if name != target_name}
+                anonymity_map[target_name] = target_name # *** 사용자 이름 직접 표시 ***
+                
+                plot_df['Anonymized_Importer'] = plot_df['importer'].apply(lambda x: anonymity_map.get(x, "기타"))
+                st.plotly_chart(px.scatter(plot_df, x='Total_Volume', y='Avg_UnitPrice', size='Total_Value', color='Anonymized_Importer', log_x=True, hover_name='Anonymized_Importer', title="수입사 포지셔닝 맵 (상위 10개사 및 귀사)"), use_container_width=True)
+
             col1, col2 = st.columns([10, 1]); col1.markdown("##### 수입 업체 그룹별 수입 빈도 분석(최근 1년)"); 
             with col2:
                 with st.popover("ℹ️"):
@@ -248,8 +271,9 @@ def main_dashboard(company_data):
             if not groups_data: st.info("그룹으로 분류할 수 있는 업체가 부족하여, 단가 분포 비교 분석을 진행할 수 없습니다.")
             else:
                 fig_box = go.Figure()
-                for name, df in groups_data.items(): fig_box.add_trace(go.Box(y=df['unitPrice'], name=group_names_map.get(name, name)))
-                if not p['target_stats'].empty: fig_box.add_hline(y=p['target_stats']['Avg_UnitPrice'].iloc[0], line_dash="dot", annotation_text="귀사 평균단가")
+                for name, df in groups_data.items():
+                    if 'unitPrice' in df.columns: fig_box.add_trace(go.Box(y=df['unitPrice'], name=group_names_map.get(name, name)))
+                if not p['target_stats'].empty: fig_box.add_hline(y=p['target_stats']['Avg_UnitPrice'].iloc[0], line_dash="dot", annotation_text=f"{target_name} 평균단가")
                 st.plotly_chart(fig_box, use_container_width=True)
             st.markdown("#### PART 2. 공급망 분석")
             s = result.get('supply_chain', {})
