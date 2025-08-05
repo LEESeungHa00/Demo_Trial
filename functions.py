@@ -46,20 +46,37 @@ def load_company_data():
         
         df.dropna(how="all", inplace=True)
         
-        def clean_and_convert_numeric(series):
-            series_str = series.astype(str)
-            series_cleaned = series_str.str.replace(r'[^\d.]', '', regex=True)
-            return pd.to_numeric(series_cleaned, errors='coerce')
+        # 최종 수정: 데이터 타입을 확인하고 그에 맞춰 지능적으로 처리하는 로직
+        def smart_numeric_conversion(series):
+            # 이미 숫자 형식인 경우 그대로 반환
+            if pd.api.types.is_numeric_dtype(series):
+                return pd.to_numeric(series, errors='coerce')
+            
+            # 문자열(Object) 형식인 경우, 숫자 외 문자 제거 후 변환
+            elif pd.api.types.is_object_dtype(series):
+                series_str = series.astype(str)
+                series_cleaned = series_str.str.replace(r'[^\d.]', '', regex=True)
+                return pd.to_numeric(series_cleaned, errors='coerce')
+            
+            # 그 외의 경우, 변환 시도
+            else:
+                return pd.to_numeric(series, errors='coerce')
 
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-        df['Volume'] = clean_and_convert_numeric(df['Volume'])
-        df['Value'] = clean_and_convert_numeric(df['Value'])
+        df['Volume'] = smart_numeric_conversion(df['Volume'])
+        df['Value'] = smart_numeric_conversion(df['Value'])
 
+        # 변환 실패한 행 진단
+        problematic_rows = df[df['Date'].isnull() | df['Volume'].isnull() | df['Value'].isnull()]
+        
         df.dropna(subset=['Date', 'Volume', 'Value'], inplace=True)
 
         if df.empty:
-            st.error("데이터 정제 후 남은 데이터가 없습니다.")
+            st.error("데이터 정제 후 유효한 데이터가 없습니다.")
             st.info("BigQuery 테이블의 'Date', 'Volume', 'Value' 컬럼에 유효한 데이터가 있는지 확인해주세요.")
+            if not problematic_rows.empty:
+                st.warning("아래는 데이터 타입 변환에 실패한 행의 예시입니다. 원본 데이터의 형식을 확인해주세요:")
+                st.dataframe(problematic_rows[['Date', 'Volume', 'Value']].head())
             return None
             
         return df
