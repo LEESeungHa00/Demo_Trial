@@ -17,57 +17,53 @@ st.set_page_config(layout="wide", page_title="수입 경쟁력 진단 솔루션"
 def load_company_data():
     """Google BigQuery에서 TDS를 불러옵니다."""
     try:
-        st.info("1. Secrets 설정 파일 확인 중...")
         if "gcp_service_account" not in st.secrets:
             st.error("Secrets 설정 오류: `secrets.toml` 파일에 [gcp_service_account] 섹션이 없습니다.")
-            st.stop()
+            return None
 
         creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
         project_id = st.secrets["gcp_service_account"]["project_id"]
-        st.success("   - Secrets 확인 완료.")
-
-        st.info("2. BigQuery 테이블 정보 설정 중...")
+        
         dataset_id = "demo_data" 
         table_id = "tds_data"   
         table_full_id = f"{project_id}.{dataset_id}.{table_id}"
         dataset_location = "asia-northeast3" 
-        st.info(f"   - 테이블 경로: `{table_full_id}`")
-        st.info(f"   - 데이터 위치: `{dataset_location}`")
 
-        st.info("3. BigQuery에 데이터 쿼리 요청 중... (이 단계에서 멈추면 권한 또는 경로 문제입니다)")
         query = f"SELECT * FROM `{table_full_id}`"
-        
         df = read_gbq(query, project_id=project_id, credentials=creds, location=dataset_location)
-        st.success(f"   - 쿼리 성공! {len(df)}개의 행을 불러왔습니다.")
         
         if df.empty:
             st.error("BigQuery 테이블에서 데이터를 불러왔지만 비어있습니다.")
-            st.info("BigQuery의 `tds_data` 테이블에 데이터가 올바르게 업로드되었는지 확인해주세요.")
             return None
 
-        st.info("4. 컬럼명 보정 및 확인 중...")
         df.columns = [col.replace('_', ' ').title() for col in df.columns]
-        
+
         required_cols = ['Date', 'Volume', 'Value', 'Reported Product Name', 'Export Country', 'Exporter']
         for col in required_cols:
             if col not in df.columns:
-                st.error(f"BigQuery 테이블 오류: 필수 컬럼 '{col}'을(를) 찾을 수 없습니다.")
-                st.info(f"실제 테이블 컬럼명: {df.columns.tolist()}")
+                st.error(f"BigQuery 테이블 오류: 필수 컬럼 '{col}'이 없습니다.")
                 return None
-        st.success("   - 컬럼명 확인 완료.")
-
-        st.info("5. 데이터 최종 정제 중...")
+        
         df.dropna(how="all", inplace=True)
+        
+        # 최종 수정: 문자열이 섞인 숫자도 처리할 수 있도록 정제 기능 강화
+        def clean_and_convert_numeric(series):
+            # 문자열로 변환 후, 숫자와 소수점 외 모든 문자 제거
+            series_str = series.astype(str)
+            series_cleaned = series_str.str.replace(r'[^\d.]', '', regex=True)
+            return pd.to_numeric(series_cleaned, errors='coerce')
+
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-        df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce')
-        df['Value'] = pd.to_numeric(df['Value'], errors='coerce')
+        df['Volume'] = clean_and_convert_numeric(df['Volume'])
+        df['Value'] = clean_and_convert_numeric(df['Value'])
+
         df.dropna(subset=['Date', 'Volume', 'Value'], inplace=True)
 
         if df.empty:
             st.error("데이터 정제 후 남은 데이터가 없습니다.")
+            st.info("BigQuery 테이블의 'Date', 'Volume', 'Value' 컬럼에 유효한 데이터가 있는지 확인해주세요.")
             return None
-        
-        st.success("데이터 로딩이 성공적으로 완료되었습니다!")
+            
         return df
     except Exception as e:
         st.error(f"데이터 로딩 중 심각한 오류가 발생했습니다:")
