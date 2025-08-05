@@ -65,7 +65,7 @@ def save_to_google_sheets(purchase_df, importer_name, consent):
         save_data_df = save_data_df[final_columns]
         if not worksheet.get('A1'): worksheet.update([save_data_df.columns.values.tolist()] + save_data_df.values.tolist(), value_input_option='USER_ENTERED')
         else: worksheet.append_rows(save_data_df.values.tolist(), value_input_option='USER_ENTERED')
-        st.toast("입력 정보가 Google Sheet에 저장되었습니다.", icon="✅")
+        #st.toast("입력 정보가 Google Sheet에 저장되었습니다.", icon="✅")
         return True
     except gspread.exceptions.APIError as e:
         st.error("Google Sheets API 오류. GCP에서 API 활성화 및 권한을 확인하세요.")
