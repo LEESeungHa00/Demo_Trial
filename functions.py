@@ -58,7 +58,33 @@ def load_company_data():
     except Exception as e:
         st.error(f"데이터 로딩 중 오류가 발생했습니다: {e}")
         return None
+# --- Google Sheets 저장 함수 (신규 추가) ---
+def save_to_google_sheets(data_to_save):
+    """사용자 입력 데이터를 지정된 구글 시트에 저장합니다."""
+    try:
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
+        client = gspread.authorize(creds)
+        
+        # secrets에 구글 시트 파일명을 저장해두고 불러옵니다.
+        spreadsheet_name = st.secrets.get("google_sheets", {}).get("spreadsheet_name", "DEMO_app_DB")
+        worksheet_name = st.secrets.get("google_sheets", {}).get("worksheet_name", "Customer_input")
 
+        sheet = client.open(spreadsheet_name).worksheet(worksheet_name)
+        
+        # 시트의 헤더가 비어있을 경우, 헤더 추가
+        if not sheet.get_all_values():
+            header = ["Date", "Reported Product Name", "HS-Code", "Export Country", "Exporter", 
+                      "Volume(KG)", "Value(USD)", "Incoterms", "Importer", "IS_Agreed", "Input_time"]
+            sheet.append_row(header)
+            
+        # 데이터 추가
+        sheet.append_row(data_to_save, value_input_option='USER_ENTERED')
+        return True
+    except Exception as e:
+        st.error(f"Google Sheets 저장 중 오류 발생: {e}")
+        st.warning("앱 secrets에 'gcp_service_account'와 'google_sheets' 설정이 올바른지 확인해주세요.")
+        return False
+        
 # --- 분석 헬퍼 함수 ---
 def clean_text(text):
     if not isinstance(text, str): return ''
@@ -68,7 +94,7 @@ def clean_text(text):
     text = re.sub(r'[^a-z0-9\s\uac00-\ud7a3]', ' ', text)
     text = re.sub(r'\b산\b', ' ', text)
     return ' '.join(text.split())
-
+    
 def name_clusters(df, cluster_col='cluster'):
     """K-Means 클러스터에 동적으로 이름을 부여합니다."""
     centroids = df.groupby(cluster_col).agg({
@@ -210,35 +236,65 @@ def login_screen():
             else:
                 st.error("비밀번호가 올바르지 않습니다.")
 
+# --- 메인 대시보드 UI ---
 def main_dashboard(company_data):
     st.title("📈 수입 경쟁력 진단 솔루션")
     st.markdown("트릿지 데이터를 기반으로 시장 내 경쟁력을 진단하고 비용 절감 기회를 포착하세요.")
-    
-    # 사용자 입력 UI
-    with st.expander("STEP 1: 분석 정보 입력", expanded='analysis_result' not in st.session_state):
-        importer_name = st.text_input("1. 귀사의 업체명을 입력해주세요.", key="importer_name").upper()
-        if 'rows' not in st.session_state: st.session_state['rows'] = [{'id': 1}]
 
+    with st.expander("STEP 1: 분석 정보 입력", expanded='analysis_groups' not in st.session_state):
+        importer_name = st.text_input("1. 귀사의 업체명을 입력해주세요.", key="importer_name_input").upper()
+        if 'rows' not in st.session_state:
+            st.session_state['rows'] = [{'id': 1}]
+
+        # --- UI 개선: 수평 레이아웃 및 전체 입력 필드 복원 ---
+        header_cols = st.columns([1.5, 3, 1, 2, 2, 1, 1, 1, 0.5])
+        headers = ["수입일", "제품 상세명", "HS-CODE", "원산지", "수출업체", "수입 중량(KG)", "총 수입금액(USD)", "Incoterms", "삭제"]
+        for col, header in zip(header_cols, headers):
+            col.markdown(f"**{header}**")
+
+        all_input_data = []
         for i, row in enumerate(st.session_state.rows):
-            # ... (기존 입력 UI 코드와 동일, 생략) ...
-            pass # Keep your original detailed input UI code here
-        
-        # For demonstration, a simplified input is used below.
-        # Replace with your full input UI.
-        if 'product_name_0' not in st.session_state:
-            st.session_state.product_name_0 = "Whisky A 12YO"
-            st.session_state.hscode_0 = "220830"
-            st.session_state.volume_0 = 1000
-            st.session_state.value_0 = 50000
-            st.session_state.final_exporter_0 = "DIAGEO"
-        
-        st.text_input("제품 상세명", key="product_name_0")
-        st.text_input("HS-CODE", key="hscode_0")
-        st.number_input("수입 중량(KG)", key="volume_0")
-        st.number_input("총 수입금액(USD)", key="value_0")
-        st.text_input("수출업체", key="final_exporter_0")
+            key_suffix = f"_{row['id']}"
+            cols = st.columns([1.5, 3, 1, 2, 2, 1, 1, 1, 0.5])
+            
+            date_val = cols[0].date_input(f"date{key_suffix}", key=f"date{key_suffix}", label_visibility="collapsed", value=datetime.now())
+            product_name_val = cols[1].text_input(f"product_name{key_suffix}", key=f"product_name{key_suffix}", label_visibility="collapsed")
+            hscode_val = cols[2].text_input(f"hscode{key_suffix}", max_chars=6, key=f"hscode{key_suffix}", label_visibility="collapsed")
+            
+            origin_options = [''] + ['직접 입력'] + sorted(company_data['export_country'].unique())
+            origin_val = cols[3].selectbox(f"origin{key_suffix}", origin_options, key=f"origin{key_suffix}", label_visibility="collapsed", format_func=lambda x: '선택' if x == '' else x)
+            if origin_val == '직접 입력':
+                origin_val = cols[3].text_input(f"custom_origin{key_suffix}", key=f"custom_origin{key_suffix}", label_visibility="collapsed", placeholder="원산지 직접 입력")
 
-        if st.button("분석하기", type="primary"):
+            exporter_options = [''] + ['직접 입력'] + sorted(company_data['exporter'].unique())
+            exporter_val = cols[4].selectbox(f"exporter{key_suffix}", exporter_options, key=f"exporter{key_suffix}", label_visibility="collapsed", format_func=lambda x: '선택' if x == '' else x)
+            if exporter_val == '직접 입력':
+                exporter_val = cols[4].text_input(f"custom_exporter{key_suffix}", key=f"custom_exporter{key_suffix}", label_visibility="collapsed", placeholder="수출업체 직접 입력")
+
+            volume_val = cols[5].number_input(f"volume{key_suffix}", min_value=0.01, format="%.2f", key=f"volume{key_suffix}", label_visibility="collapsed")
+            value_val = cols[6].number_input(f"value{key_suffix}", min_value=0.01, format="%.2f", key=f"value{key_suffix}", label_visibility="collapsed")
+            incoterms_val = cols[7].selectbox(f"incoterms{key_suffix}", ["FOB", "CFR", "CIF", "EXW", "DDP", "기타"], key=f"incoterms{key_suffix}", label_visibility="collapsed")
+
+            if len(st.session_state.rows) > 1:
+                if cols[8].button("삭제", key=f"delete{key_suffix}"):
+                    st.session_state.rows.pop(i)
+                    st.rerun()
+
+            all_input_data.append({
+                "Date": date_val, "Reported Product Name": product_name_val, "HS-Code": hscode_val,
+                "Origin Country": origin_val, "Exporter": exporter_val, "Volume": volume_val,
+                "Value": value_val, "Incoterms": incoterms_val
+            })
+            
+        if st.button("➕ 내역 추가하기"):
+            new_id = max(row['id'] for row in st.session_state.rows) + 1 if st.session_state.rows else 1
+            st.session_state.rows.append({'id': new_id})
+            st.rerun()
+        
+        st.markdown("---")
+        consent = st.checkbox("입력하신 정보는 데이터 분석 품질 향상을 위해 저장 및 활용되는 것에 동의합니다.", value=True)
+        
+        if st.button("분석하기", type="primary", use_container_width=True):
             with st.spinner('데이터를 분석하고 있습니다...'):
                 all_purchase_data = []
                 for i in range(len(st.session_state.get('rows', [{'id':1}]))):
