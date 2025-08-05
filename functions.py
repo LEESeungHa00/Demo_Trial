@@ -17,34 +17,36 @@ st.set_page_config(layout="wide", page_title="수입 경쟁력 진단 솔루션"
 def load_company_data():
     """Google BigQuery에서 TDS를 불러옵니다."""
     try:
+        # 1. Secrets 유효성 검사
         if "gcp_service_account" not in st.secrets:
-            st.error("Secrets 설정 오류: [gcp_service_account] 섹션을 찾을 수 없습니다.")
-            st.info("`secrets.toml` 파일이 올바른 형식으로 작성되었는지, 가이드를 참고하여 다시 확인해주세요.")
-            st.stop() # 여기서 실행 중지
+            st.error("Secrets 설정 오류: `secrets.toml` 파일에 [gcp_service_account] 섹션이 없습니다.")
+            return None # 실패 시 None 반환
 
         creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
         project_id = st.secrets["gcp_service_account"]["project_id"]
         
+        # 2. BigQuery 경로 설정
         dataset_id = "demo_data" 
         table_id = "tds_data"   
         table_full_id = f"{project_id}.{dataset_id}.{table_id}"
         dataset_location = "asia-northeast3" 
 
+        # 3. 쿼리 실행
         query = f"SELECT * FROM `{table_full_id}`"
-        
         df = read_gbq(query, project_id=project_id, credentials=creds, location=dataset_location)
         
-        # BigQuery가 자동으로 생성한 underscore(_)를 공백으로 변경
+        # 4. 컬럼명 보정
         df.columns = [col.replace('_', ' ') for col in df.columns]
 
-        # 필수 컬럼 존재 여부 확인
+        # 5. 필수 컬럼 확인
         required_cols = ['Date', 'Volume', 'Value', 'Reported Product Name', 'Export Country', 'Exporter']
         for col in required_cols:
             if col not in df.columns:
-                st.error(f"BigQuery 테이블에 필수 컬럼 '{col}'이 없습니다. (공백/밑줄 문제일 수 있습니다)")
-                st.info(f"현재 테이블의 실제 컬럼명: {df.columns.tolist()}")
-                st.stop() # 여기서 실행 중지
+                st.error(f"BigQuery 테이블 오류: 필수 컬럼 '{col}'이 없습니다.")
+                st.info(f"실제 테이블 컬럼명: {df.columns.tolist()}")
+                return None # 실패 시 None 반환
 
+        # 6. 데이터 정제
         df.dropna(how="all", inplace=True)
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
         df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce')
@@ -52,12 +54,9 @@ def load_company_data():
         df.dropna(subset=['Date', 'Volume', 'Value'], inplace=True)
         return df
     except Exception as e:
-        st.error(f"BigQuery 연결 또는 데이터 처리 중 오류가 발생했습니다:")
+        st.error(f"데이터 로딩 중 심각한 오류가 발생했습니다:")
         st.exception(e) # 상세한 오류 내용을 화면에 그대로 출력
-        st.info("BigQuery 설정(데이터세트/테이블 이름, 위치)과 서비스 계정 권한을 다시 확인해주세요.")
-        st.stop() # 여기서 실행 중지
-
-OUR_COMPANY_DATA = load_company_data()
+        return None # 실패 시 None 반환
 
 # --- 새로운 범용 스마트 매칭 로직 ---
 def clean_text(text):
@@ -160,15 +159,8 @@ def login_screen():
             else:
                 st.error("비밀번호가 올바르지 않습니다.")
 
-def main_dashboard():
+def main_dashboard(company_data):
     st.title("📈 수입 경쟁력 진단 솔루션")
-    
-    if OUR_COMPANY_DATA.empty:
-        # load_company_data 함수에서 st.stop()으로 실행을 멈추므로,
-        # 이 메시지는 거의 표시되지 않지만 만약을 위해 남겨둡니다.
-        st.warning("데이터 로딩에 실패하여 앱을 실행할 수 없습니다. 위의 오류 메시지를 확인해주세요.")
-        return
-
     st.markdown("트릿지 데이터를 기반으로 시장 내 경쟁력을 진단하고 비용 절감 기회를 포착하세요.")
 
     with st.expander("STEP 1: 분석 정보 입력", expanded='analysis_groups' not in st.session_state):
@@ -182,8 +174,8 @@ def main_dashboard():
             cols[0].date_input("수입일", key=f"date_{i}")
             cols[1].text_input("제품 상세명", placeholder="예 : 엑스트라버진 올리브유", key=f"product_name_{i}")
             cols[2].text_input("HS-CODE(6자리)", max_chars=6, key=f"hscode_{i}")
-            cols[3].selectbox("원산지", [''] + sorted(OUR_COMPANY_DATA['Export Country'].unique()), key=f"origin_{i}")
-            cols[4].selectbox("수출업체", [''] + sorted(OUR_COMPANY_DATA['Exporter'].unique()), key=f"exporter_{i}")
+            cols[3].selectbox("원산지", [''] + sorted(company_data['Export Country'].unique()), key=f"origin_{i}")
+            cols[4].selectbox("수출업체", [''] + sorted(company_data['Exporter'].unique()), key=f"exporter_{i}")
             cols[5].number_input("수입 중량(KG)", min_value=0.01, format="%.2f", key=f"volume_{i}")
             cols[6].number_input("총 수입금액(USD)", min_value=0.01, format="%.2f", key=f"value_{i}")
             cols[7].selectbox("Incoterms", ["FOB", "CFR", "CIF", "EXW", "DDP", "기타"], key=f"incoterms_{i}")
@@ -206,7 +198,7 @@ def main_dashboard():
                 analysis_groups = []
                 all_purchase_data = []
                 
-                OUR_COMPANY_DATA['cleaned_name'] = OUR_COMPANY_DATA['Reported Product Name'].apply(clean_text)
+                company_data['cleaned_name'] = company_data['Reported Product Name'].apply(clean_text)
                 
                 for i in range(len(st.session_state.rows)):
                     user_product_name = st.session_state[f'product_name_{i}']
@@ -230,7 +222,7 @@ def main_dashboard():
                     def is_match(cleaned_tds_name):
                         return user_tokens.issubset(set(cleaned_tds_name.split()))
                     
-                    matched_df = OUR_COMPANY_DATA[OUR_COMPANY_DATA['cleaned_name'].apply(is_match)]
+                    matched_df = company_data[company_data['cleaned_name'].apply(is_match)]
                     
                     analysis_groups.append({
                         "id": i,
@@ -294,7 +286,7 @@ def main_dashboard():
                 st.warning("선택된 비교 대상 제품이 없어 분석을 건너뜁니다.")
                 continue
 
-            comparison_df = OUR_COMPANY_DATA[OUR_COMPANY_DATA['Reported Product Name'].isin(group['selected_products'])]
+            comparison_df = company_data[company_data['Reported Product Name'].isin(group['selected_products'])]
             
             competitor_res, yearly_res, timeseries_res = process_analysis_data(
                 group['user_input'], 
@@ -351,6 +343,13 @@ def main_dashboard():
             st.rerun()
 
 # --- 메인 로직 ---
-if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
-if st.session_state['logged_in']: main_dashboard()
-else: login_screen()
+if 'logged_in' not in st.session_state: 
+    st.session_state['logged_in'] = False
+
+if st.session_state['logged_in']:
+    # 수정: 데이터 로딩을 메인 로직에서 처리
+    our_company_data = load_company_data()
+    if our_company_data is not None:
+        main_dashboard(our_company_data)
+else:
+    login_screen()
