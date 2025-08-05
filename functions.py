@@ -17,36 +17,31 @@ st.set_page_config(layout="wide", page_title="수입 경쟁력 진단 솔루션"
 def load_company_data():
     """Google BigQuery에서 TDS를 불러옵니다."""
     try:
-        # 1. Secrets 유효성 검사
         if "gcp_service_account" not in st.secrets:
             st.error("Secrets 설정 오류: `secrets.toml` 파일에 [gcp_service_account] 섹션이 없습니다.")
-            return None # 실패 시 None 반환
+            return None
 
         creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
         project_id = st.secrets["gcp_service_account"]["project_id"]
         
-        # 2. BigQuery 경로 설정
         dataset_id = "demo_data" 
         table_id = "tds_data"   
         table_full_id = f"{project_id}.{dataset_id}.{table_id}"
         dataset_location = "asia-northeast3" 
 
-        # 3. 쿼리 실행
         query = f"SELECT * FROM `{table_full_id}`"
         df = read_gbq(query, project_id=project_id, credentials=creds, location=dataset_location)
         
-        # 4. 컬럼명 보정
-        df.columns = [col.replace('_', ' ') for col in df.columns]
+        # 최종 수정: BigQuery 컬럼명의 underscore를 공백으로 바꾸고, 모두 Title Case로 통일하여 대소문자 문제 해결
+        df.columns = [col.replace('_', ' ').title() for col in df.columns]
 
-        # 5. 필수 컬럼 확인
         required_cols = ['Date', 'Volume', 'Value', 'Reported Product Name', 'Export Country', 'Exporter']
         for col in required_cols:
             if col not in df.columns:
                 st.error(f"BigQuery 테이블 오류: 필수 컬럼 '{col}'이 없습니다.")
                 st.info(f"실제 테이블 컬럼명: {df.columns.tolist()}")
-                return None # 실패 시 None 반환
+                return None
 
-        # 6. 데이터 정제
         df.dropna(how="all", inplace=True)
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
         df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce')
@@ -55,8 +50,8 @@ def load_company_data():
         return df
     except Exception as e:
         st.error(f"데이터 로딩 중 심각한 오류가 발생했습니다:")
-        st.exception(e) # 상세한 오류 내용을 화면에 그대로 출력
-        return None # 실패 시 None 반환
+        st.exception(e)
+        return None
 
 # --- 새로운 범용 스마트 매칭 로직 ---
 def clean_text(text):
@@ -174,8 +169,19 @@ def main_dashboard(company_data):
             cols[0].date_input("수입일", key=f"date_{i}")
             cols[1].text_input("제품 상세명", placeholder="예 : 엑스트라버진 올리브유", key=f"product_name_{i}")
             cols[2].text_input("HS-CODE(6자리)", max_chars=6, key=f"hscode_{i}")
-            cols[3].selectbox("원산지", [''] + sorted(company_data['Export Country'].unique()), key=f"origin_{i}")
-            cols[4].selectbox("수출업체", [''] + sorted(company_data['Exporter'].unique()), key=f"exporter_{i}")
+            
+            # 원산지 입력 (직접 입력 기능 추가)
+            origin_options = ['직접 입력'] + sorted(company_data['Export Country'].unique())
+            selected_origin = cols[3].selectbox("원산지", origin_options, key=f"origin_{i}")
+            if selected_origin == '직접 입력':
+                cols[3].text_input("└ 원산지 직접 입력", key=f"custom_origin_{i}", placeholder="직접 입력하세요")
+
+            # 수출업체 입력 (직접 입력 기능 추가)
+            exporter_options = ['직접 입력'] + sorted(company_data['Exporter'].unique())
+            selected_exporter = cols[4].selectbox("수출업체", exporter_options, key=f"exporter_{i}")
+            if selected_exporter == '직접 입력':
+                cols[4].text_input("└ 수출업체 직접 입력", key=f"custom_exporter_{i}", placeholder="직접 입력하세요")
+
             cols[5].number_input("수입 중량(KG)", min_value=0.01, format="%.2f", key=f"volume_{i}")
             cols[6].number_input("총 수입금액(USD)", min_value=0.01, format="%.2f", key=f"value_{i}")
             cols[7].selectbox("Incoterms", ["FOB", "CFR", "CIF", "EXW", "DDP", "기타"], key=f"incoterms_{i}")
@@ -202,18 +208,31 @@ def main_dashboard(company_data):
                 
                 for i in range(len(st.session_state.rows)):
                     user_product_name = st.session_state[f'product_name_{i}']
+                    
+                    # 원산지 값 가져오기
+                    origin_val = st.session_state[f'origin_{i}']
+                    if origin_val == '직접 입력':
+                        origin_val = st.session_state.get(f'custom_origin_{i}', "")
+
+                    # 수출업체 값 가져오기
+                    exporter_val = st.session_state[f'exporter_{i}']
+                    if exporter_val == '직접 입력':
+                        exporter_val = st.session_state.get(f'custom_exporter_{i}', "")
+
                     entry = {
                         'Date': st.session_state[f'date_{i}'],
                         'Reported Product Name': user_product_name,
                         'HS-CODE': st.session_state[f'hscode_{i}'],
-                        'Origin Country': st.session_state[f'origin_{i}'].upper(),
-                        'Exporter': st.session_state[f'exporter_{i}'].upper(),
+                        'Origin Country': origin_val.upper(),
+                        'Exporter': exporter_val.upper(),
                         'Volume': st.session_state[f'volume_{i}'],
                         'Value': st.session_state[f'value_{i}'],
                         'Incoterms': st.session_state[f'incoterms_{i}'],
                     }
-                    if not user_product_name:
-                        st.error(f"{i+1}번째 행의 제품 상세명을 입력해주세요.")
+
+                    # 유효성 검사
+                    if not user_product_name or not origin_val or not exporter_val:
+                        st.error(f"{i+1}번째 행의 '제품 상세명', '원산지', '수출업체'는 필수 입력 항목입니다.")
                         return
                     
                     all_purchase_data.append(entry)
@@ -347,7 +366,6 @@ if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 
 if st.session_state['logged_in']:
-    # 수정: 데이터 로딩을 메인 로직에서 처리
     our_company_data = load_company_data()
     if our_company_data is not None:
         main_dashboard(our_company_data)
