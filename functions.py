@@ -53,8 +53,14 @@ def load_company_data():
 
 # --- 분석 헬퍼 함수 ---
 def clean_text(text):
+    """최초 버전의 스마트 매핑을 위한 텍스트 정제 함수"""
     if not isinstance(text, str): return ''
-    return ' '.join(re.sub(r'[^a-z0-9\s\uac00-\ud7a3]', ' ', text.lower()).split())
+    text = text.lower()
+    text = re.sub(r'\(.*?\)|\[.*?\]', ' ', text)
+    text = re.sub(r'(\d+)\s*(?:y|yo|year|years|old|년산|년)', r'\1', text)
+    text = re.sub(r'[^a-z0-9\s\uac00-\ud7a3]', ' ', text)
+    text = re.sub(r'\b산\b', ' ', text)
+    return ' '.join(text.split())
 
 def get_excel_col_name(n):
     name = ""
@@ -132,8 +138,7 @@ def login_screen():
         password = st.text_input("비밀번호", type="password")
         if st.form_submit_button("접속하기"):
             if password == st.secrets.get("APP_PASSWORD", "tridgeDemo_2025"):
-                st.session_state['logged_in'] = True
-                st.rerun()
+                st.session_state['logged_in'] = True; st.rerun()
             else: st.error("비밀번호가 올바르지 않습니다.")
 
 def main_dashboard(company_data):
@@ -143,7 +148,6 @@ def main_dashboard(company_data):
     with st.expander("STEP 1: 분석 정보 입력", expanded='analysis_groups' not in st.session_state):
         importer_name = st.text_input("1. 귀사의 업체명을 입력해주세요.", key="importer_name").upper()
         if 'rows' not in st.session_state: st.session_state['rows'] = [{'id': 1}]
-        
         for i, row in enumerate(st.session_state.rows):
             st.markdown(f"**수입 내역 {i+1}**")
             cols = st.columns([1.5, 3, 1, 2, 2, 1, 1, 1])
@@ -158,8 +162,8 @@ def main_dashboard(company_data):
             selected_exporter = cols[4].selectbox(f"수출업체_{i+1}", exporter_options, key=f"exporter_{i}", label_visibility="collapsed", format_func=lambda x: '수출업체 선택' if x == '' else x)
             if selected_exporter == '직접 입력': st.session_state[f'final_exporter_{i}'] = cols[4].text_input(f"수출업체직접_{i+1}", key=f"custom_exporter_{i}", label_visibility="collapsed", placeholder="수출업체 직접 입력")
             else: st.session_state[f'final_exporter_{i}'] = selected_exporter
-            cols[5].number_input(f"수입중량_{i+1}", min_value=0.01, format="%.2f", key=f"volume_{i}", label_visibility="collapsed", help="수입 중량(KG)")
-            cols[6].number_input(f"수입금액_{i+1}", min_value=0.01, format="%.2f", key=f"value_{i}", label_visibility="collapsed", help="총 수입금액(USD)")
+            cols[5].number_input(f"수입중량_{i+1}", min_value=0.01, format="%.2f", key=f"volume_{i}", label_visibility="collapsed", placeholder="수입 중량(KG)")
+            cols[6].number_input(f"수입금액_{i+1}", min_value=0.01, format="%.2f", key=f"value_{i}", label_visibility="collapsed", placeholder="총 수입금액(USD)")
             if len(st.session_state.rows) > 1 and cols[7].button("삭제", key=f"delete_{i}"):
                 st.session_state.rows.pop(i); st.rerun()
         if st.button("➕ 내역 추가하기"):
@@ -167,8 +171,7 @@ def main_dashboard(company_data):
         st.markdown("---")
         consent = st.checkbox("입력하신 정보는 데이터 분석 품질 향상을 위해 저장 및 활용되는 것에 동의합니다.", value=True)
         if st.button("분석하기", type="primary", use_container_width=True):
-            if not consent:
-                st.warning("정보 활용 동의에 체크해주세요."); st.stop()
+            if not consent: st.warning("정보 활용 동의에 체크해주세요."); st.stop()
             with st.spinner('데이터를 분석하고 있습니다...'):
                 all_purchase_data = []
                 for i in range(len(st.session_state.rows)):
@@ -177,79 +180,70 @@ def main_dashboard(company_data):
                         st.error(f"수입 내역 {i+1}의 모든 값을 정확히 입력해주세요."); return
                     all_purchase_data.append(entry)
                 purchase_df = pd.DataFrame(all_purchase_data)
-                agg_funcs = {'Date': 'first', 'Volume': 'sum', 'Value': 'sum', 'HS-CODE': 'first', 'Origin Country': 'first', 'Exporter': 'first'}
-                aggregated_purchase_df = purchase_df.groupby('Reported Product Name').agg(agg_funcs).reset_index()
+                purchase_df['cleaned_name'] = purchase_df['Reported Product Name'].apply(clean_text)
+                agg_funcs = {'Reported Product Name': 'first', 'Date': 'first', 'Volume': 'sum', 'Value': 'sum', 'HS-CODE': 'first', 'Origin Country': 'first', 'Exporter': 'first'}
+                aggregated_purchase_df = purchase_df.groupby('cleaned_name', as_index=False).agg(agg_funcs)
                 analysis_groups = []
                 company_data['cleaned_name'] = company_data['reported_product_name'].apply(clean_text)
                 for i, row in aggregated_purchase_df.iterrows():
                     entry = row.to_dict()
-                    user_tokens = set(clean_text(entry['Reported Product Name']).split())
-                    # *** 중요 버그 수정: 제품명 비교 로직 ***
-                    is_match = lambda cleaned_tds_name: user_tokens.issubset(set(cleaned_tds_name.split()))
+                    user_tokens = set(entry['cleaned_name'].split())
+                    is_match = lambda cleaned_tds_name: user_tokens.issubset(set(cleaned_tds_name.split())) if isinstance(cleaned_tds_name, str) else False
                     matched_df = company_data[company_data['cleaned_name'].apply(is_match)]
-                    analysis_groups.append({ "id": i, "user_input": entry, "matched_products": sorted(matched_df['reported_product_name'].unique().tolist()), "selected_products": sorted(matched_df['reported_product_name'].unique().tolist()) })
+                    matched_products = sorted(matched_df['reported_product_name'].unique().tolist())
+                    analysis_groups.append({ "id": i, "user_input": entry, "matched_products": matched_products, "selected_products": matched_products })
                 st.session_state['importer_name_result'] = importer_name
                 st.session_state['analysis_groups'] = analysis_groups
                 st.rerun()
 
     if 'analysis_groups' in st.session_state:
         st.header("1. HS-Code 시장 개요")
-        for group in st.session_state.analysis_groups:
-            result_overview = run_all_analysis(group['user_input'], company_data, [], st.session_state.get('importer_name_result', ''))
-            st.markdown(f"#### HS-Code: {group['user_input']['HS-CODE']}")
-            if 'overview' in result_overview and result_overview['overview']:
-                o = result_overview['overview']
-                cols = st.columns(3)
-                cols[0].metric(f"{o['this_year']}년 수입 중량 (KG)", f"{o['vol_this_year']:,.0f}", f"{o['vol_yoy']:.1%}" if pd.notna(o['vol_yoy']) else "N/A", delta_color="inverse")
-                cols[1].metric(f"{o['this_year']}년 평균 단가 (USD/KG)", f"${o['price_this_year']:.2f}", f"{o['price_yoy']:.1%}" if pd.notna(o['price_yoy']) else "N/A", delta_color="inverse")
-                cols[2].metric("평균 수입 주기", f"{o['avg_total_cycle']:.1f} 일" if pd.notna(o['avg_total_cycle']) else "N/A", help="해당 HS-Code를 수입하는 모든 업체의 평균적인 거래 간격입니다.")
-            else: st.info("해당 HS-Code에 대한 데이터가 부족하여 Overview 분석을 생략합니다.")
-            st.markdown("---")
-
-        with st.expander("STEP 2: 상세 분석을 위한 제품 필터링", expanded=True):
-            for i, group in enumerate(st.session_state.analysis_groups):
-                st.markdown(f"**분석 그룹: \"{group['user_input']['Reported Product Name']}\"**")
+        overview_hscodes = {g['user_input']['HS-CODE'] for g in st.session_state.analysis_groups}
+        for hscode in overview_hscodes:
+            representative_group = next((g for g in st.session_state.analysis_groups if g['user_input']['HS-CODE'] == hscode), None)
+            if representative_group:
+                result_overview = run_all_analysis(representative_group['user_input'], company_data, [], "")
+                st.markdown(f"#### HS-Code: {hscode}")
+                if 'overview' in result_overview and result_overview['overview']:
+                    o = result_overview['overview']
+                    cols = st.columns(3); cols[0].metric(f"{o['this_year']}년 수입 중량 (KG)", f"{o['vol_this_year']:,.0f}", f"{o['vol_yoy']:.1%}" if pd.notna(o['vol_yoy']) else "N/A", delta_color="inverse"); cols[1].metric(f"{o['this_year']}년 평균 단가 (USD/KG)", f"${o['price_this_year']:.2f}", f"{o['price_yoy']:.1%}" if pd.notna(o['price_yoy']) else "N/A", delta_color="inverse"); cols[2].metric("평균 수입 주기", f"{o['avg_total_cycle']:.1f} 일" if pd.notna(o['avg_total_cycle']) else "N/A", help="해당 HS-Code를 수입하는 모든 업체의 평균적인 거래 간격입니다.")
+                else: st.info(f"HS-Code {hscode}에 대한 데이터가 부족하여 Overview 분석을 생략합니다.")
+        st.markdown("---")
+        
+        st.header("2. 제품별 상세 경쟁 분석")
+        for i, group in enumerate(st.session_state.analysis_groups):
+            product_name = group['user_input']['Reported Product Name']
+            st.subheader(f"분석 그룹: \"{product_name}\" (및 유사 제품)")
+            with st.expander(f"비교 대상 제품 필터링", expanded=True):
                 selected = st.multiselect("분석에 활용할 제품명 선택:", options=group['matched_products'], default=group['selected_products'], key=f"filter_{group['id']}")
                 st.session_state.analysis_groups[i]['selected_products'] = selected
-
-        st.header("2. 제품별 상세 경쟁 분석")
-        for group in st.session_state.analysis_groups:
-            st.subheader(f"분석 결과: \"{group['user_input']['Reported Product Name']}\"")
-            if not group['selected_products']: st.warning("선택된 제품이 없어 상세 분석을 건너뜁니다."); continue
-            result = run_all_analysis(group['user_input'], company_data, group['selected_products'], st.session_state.get('importer_name_result', ''))
-            if not result.get('positioning'): st.info("선택된 제품군에 대한 데이터가 부족하여 상세 분석을 진행할 수 없습니다."); continue
+            if not selected: st.warning("비교할 제품을 선택해주세요."); st.markdown("---"); continue
             
-            p = result['positioning']
-            analysis_data_pos = company_data[company_data['reported_product_name'].isin(group['selected_products'])]
+            result = run_all_analysis(group['user_input'], company_data, selected, st.session_state.get('importer_name_result', ''))
+            if not result.get('positioning'): st.info("선택된 제품군에 대한 데이터가 부족하여 상세 분석을 진행할 수 없습니다."); st.markdown("---"); continue
             
+            p = result['positioning']; analysis_data_pos = company_data[company_data['reported_product_name'].isin(selected)]
+            target_name = st.session_state.get('importer_name_result', ''); all_importers_in_stats = p['bubble_data']['importer'].unique()
+            anonymity_map = {name: f"{get_excel_col_name(i)}사" for i, name in enumerate(all_importers_in_stats) if name != target_name}; anonymity_map[target_name] = "귀사"
             st.markdown("#### PART 1. 마켓 포지션 분석")
             if p['bubble_data'].empty: st.info("포지션 맵을 그리기 위한 데이터가 충분하지 않습니다.")
             else:
-                bubble_df = p['bubble_data'].copy()
-                target_name = st.session_state.get('importer_name_result', '')
-                all_importers = bubble_df['importer'].unique()
-                anonymity_map = {name: f"{get_excel_col_name(i)}사" for i, name in enumerate(all_importers) if name != target_name}
-                anonymity_map[target_name] = "귀사"
-                bubble_df['Anonymized_Importer'] = bubble_df['importer'].apply(lambda x: anonymity_map.get(x, "기타"))
+                bubble_df = p['bubble_data'].copy(); bubble_df['Anonymized_Importer'] = bubble_df['importer'].apply(lambda x: anonymity_map.get(x, "기타"))
                 st.plotly_chart(px.scatter(bubble_df, x='Total_Volume', y='Avg_UnitPrice', size='Total_Value', color='Anonymized_Importer', log_x=True, hover_name='Anonymized_Importer', title="수입사 포지셔닝 맵"), use_container_width=True)
-
-            col1, col2 = st.columns([10, 1])
-            with col1: st.markdown("##### 수입 업체 그룹별 수입 빈도 분석(최근 1년)")
+            col1, col2 = st.columns([10, 1]); col1.markdown("##### 수입 업체 그룹별 수입 빈도 분석(최근 1년)"); 
             with col2:
                 with st.popover("ℹ️"):
-                    st.markdown("""**그룹 분류 기준:**\n- **시장 선도 그룹**: 수입금액 기준 누적 70% 차지 상위 기업\n- **유사 규모 경쟁 그룹**: 귀사 순위 기준 상하 ±10% 범위 기업\n- **최저가 달성 그룹**: 평균 단가 하위 15% 기업 (최소 2회 이상 수입)""")
-            
+                    st.markdown("""**그룹 분류 기준:**\n- **시장 선도 그룹**: 수입금액 기준 누적 70% 차지\n- **유사 규모 경쟁 그룹**: 귀사 순위 기준 상하 ±10%\n- **최저가 달성 그룹**: 평균 단가 하위 15% (최소 2회 이상 수입)""")
             groups_data = {name: analysis_data_pos[analysis_data_pos['importer'].isin(df['importer'])] for name, df in p['groups'].items() if not df.empty}
             group_names_map = {"Market Leaders": "시장 선도 그룹", "Direct Peers": "유사 규모 경쟁 그룹", "Price Achievers": "최저가 달성 그룹"}
             cols = st.columns(2)
-            for i, (key, name) in enumerate(group_names_map.items()):
-                with cols[i % 2]:
+            for j, (key, name) in enumerate(group_names_map.items()):
+                with cols[j % 2]:
                     if key in groups_data:
                         fig = create_monthly_frequency_bar_chart(groups_data[key], name)
                         if fig: st.plotly_chart(fig, use_container_width=True)
                         else: st.info(f"'{name}' 그룹은 존재하나, 최근 1년간의 수입 기록이 없어 빈도 분석을 생략합니다.")
                     else: st.info(f"조건에 맞는 '{name}'이(가) 없어 해당 그룹의 수입 빈도 분석을 생략합니다.")
-
             st.markdown("##### 그룹별 수입 단가 분포 비교")
             if not groups_data: st.info("그룹으로 분류할 수 있는 업체가 부족하여, 단가 분포 비교 분석을 진행할 수 없습니다.")
             else:
@@ -257,17 +251,15 @@ def main_dashboard(company_data):
                 for name, df in groups_data.items(): fig_box.add_trace(go.Box(y=df['unitPrice'], name=group_names_map.get(name, name)))
                 if not p['target_stats'].empty: fig_box.add_hline(y=p['target_stats']['Avg_UnitPrice'].iloc[0], line_dash="dot", annotation_text="귀사 평균단가")
                 st.plotly_chart(fig_box, use_container_width=True)
-
             st.markdown("#### PART 2. 공급망 분석")
             s = result.get('supply_chain', {})
             if not s: st.info("거래 데이터를 비교하여 추가적인 비용 절감 기회를 분석하기에는 데이터가 부족합니다.")
             else:
                 if 'same_exporter_stats' in s and len(s['same_exporter_stats']) > 1:
                     st.markdown(f"##### **{group['user_input']['Exporter']}** 거래 경쟁사 비교")
-                    df_plot = s['same_exporter_stats']
-                    fig = make_subplots(specs=[[{"secondary_y": True}]])
-                    fig.add_trace(go.Bar(x=df_plot['importer'], y=df_plot['Total_Volume'], name='총 수입 중량'), secondary_y=False)
-                    fig.add_trace(go.Scatter(x=df_plot['importer'], y=df_plot['Avg_UnitPrice'], name='평균 단가'), secondary_y=True)
+                    df_plot = s['same_exporter_stats'].copy()
+                    df_plot['Anonymized_Importer'] = df_plot['importer'].apply(lambda x: anonymity_map.get(x, "기타"))
+                    fig = make_subplots(specs=[[{"secondary_y": True}]]); fig.add_trace(go.Bar(x=df_plot['Anonymized_Importer'], y=df_plot['Total_Volume'], name='총 수입 중량'), secondary_y=False); fig.add_trace(go.Scatter(x=df_plot['Anonymized_Importer'], y=df_plot['Avg_UnitPrice'], name='평균 단가'), secondary_y=True)
                     st.plotly_chart(fig, use_container_width=True)
                 if 'best_exporter' in s:
                     be = s['best_exporter']
