@@ -15,7 +15,6 @@ from zoneinfo import ZoneInfo
 st.set_page_config(layout="wide", page_title="수입 경쟁력 진단 솔루션")
 
 # --- API 사용 범위(Scope) 정의 ---
-# "이 서비스 계정으로 아래 API들을 사용하겠습니다"라고 명시적으로 선언합니다.
 SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/drive',
@@ -27,7 +26,6 @@ SCOPES = [
 def load_company_data():
     """Google BigQuery에서 데이터를 불러오고 기본 전처리를 수행합니다."""
     try:
-        # 인증 정보에 SCOPES를 포함하여 Credentials 객체 생성
         creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
         project_id = st.secrets["gcp_service_account"]["project_id"]
         table_full_id = f"{project_id}.demo_data.tds_data"
@@ -46,7 +44,7 @@ def load_company_data():
         return df
     except Exception as e: st.error(f"데이터 로딩 중 오류: {e}"); return None
 
-# --- Google Sheets 저장 (사용자 제공 로직 기반으로 전면 교체) ---
+# --- Google Sheets 저장 ---
 def save_to_google_sheets(purchase_df, importer_name, consent):
     """사용자 입력 데이터프레임을 지정된 구글 시트에 저장합니다."""
     try:
@@ -65,11 +63,15 @@ def save_to_google_sheets(purchase_df, importer_name, consent):
         save_data_df['consent'] = consent
         save_data_df['timestamp'] = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
         
-        # 날짜 포맷팅 및 전체 문자열 변환
+        # --- 오류 수정 부분 ---
+        # 1. 판다스 전용 날짜/시간 타입으로 변환
+        save_data_df['Date'] = pd.to_datetime(save_data_df['Date'])
+        # 2. 원하는 형식의 문자열로 변경
         save_data_df['Date'] = save_data_df['Date'].dt.strftime('%Y-%m-%d')
+        # ----------------------
+        
         save_data_df = save_data_df.astype(str)
         
-        # 헤더 순서 정렬
         final_columns = ["Date", "Reported Product Name", "HS-Code", "Origin Country", "Exporter", "Volume", "Value", "Incoterms", "importer_name", "consent", "timestamp"]
         save_data_df = save_data_df[final_columns]
         
