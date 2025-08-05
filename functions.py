@@ -12,14 +12,15 @@ from pandas_gbq import read_gbq
 # --- 초기 설정 및 페이지 구성 ---
 st.set_page_config(layout="wide", page_title="수입 경쟁력 진단 솔루션")
 
-# --- Google BigQuery에서 데이터 불러오기 (컬럼명 자동 보정 기능 추가) ---
+# --- Google BigQuery에서 데이터 불러오기 (진단 기능 강화) ---
 @st.cache_data(ttl=3600)
 def load_company_data():
     """Google BigQuery에서 TDS를 불러옵니다."""
     try:
         if "gcp_service_account" not in st.secrets:
             st.error("Secrets 설정 오류: [gcp_service_account] 섹션을 찾을 수 없습니다.")
-            return pd.DataFrame()
+            st.info("`secrets.toml` 파일이 올바른 형식으로 작성되었는지, 가이드를 참고하여 다시 확인해주세요.")
+            st.stop() # 여기서 실행 중지
 
         creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
         project_id = st.secrets["gcp_service_account"]["project_id"]
@@ -33,7 +34,7 @@ def load_company_data():
         
         df = read_gbq(query, project_id=project_id, credentials=creds, location=dataset_location)
         
-        # 최종 수정: BigQuery가 자동으로 생성한 underscore(_)를 공백으로 변경하여 컬럼명 불일치 문제 해결
+        # BigQuery가 자동으로 생성한 underscore(_)를 공백으로 변경
         df.columns = [col.replace('_', ' ') for col in df.columns]
 
         # 필수 컬럼 존재 여부 확인
@@ -42,7 +43,7 @@ def load_company_data():
             if col not in df.columns:
                 st.error(f"BigQuery 테이블에 필수 컬럼 '{col}'이 없습니다. (공백/밑줄 문제일 수 있습니다)")
                 st.info(f"현재 테이블의 실제 컬럼명: {df.columns.tolist()}")
-                return pd.DataFrame()
+                st.stop() # 여기서 실행 중지
 
         df.dropna(how="all", inplace=True)
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
@@ -52,9 +53,9 @@ def load_company_data():
         return df
     except Exception as e:
         st.error(f"BigQuery 연결 또는 데이터 처리 중 오류가 발생했습니다:")
-        st.exception(e)
+        st.exception(e) # 상세한 오류 내용을 화면에 그대로 출력
         st.info("BigQuery 설정(데이터세트/테이블 이름, 위치)과 서비스 계정 권한을 다시 확인해주세요.")
-        return pd.DataFrame()
+        st.stop() # 여기서 실행 중지
 
 OUR_COMPANY_DATA = load_company_data()
 
@@ -163,7 +164,9 @@ def main_dashboard():
     st.title("📈 수입 경쟁력 진단 솔루션")
     
     if OUR_COMPANY_DATA.empty:
-        st.warning("데이터를 불러오는 중이거나 로딩에 실패했습니다. 잠시 후 새로고침해주세요.")
+        # load_company_data 함수에서 st.stop()으로 실행을 멈추므로,
+        # 이 메시지는 거의 표시되지 않지만 만약을 위해 남겨둡니다.
+        st.warning("데이터 로딩에 실패하여 앱을 실행할 수 없습니다. 위의 오류 메시지를 확인해주세요.")
         return
 
     st.markdown("트릿지 데이터를 기반으로 시장 내 경쟁력을 진단하고 비용 절감 기회를 포착하세요.")
