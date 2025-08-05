@@ -283,10 +283,10 @@ def main_dashboard(company_data):
                 num_alternatives = len(alts)
                 st.success(f"**비용 절감 기회 포착!** 현재 거래처보다 **최대 {best_deal['price_saving_pct']:.1f}%** 저렴한 대체 거래처가 **{num_alternatives}개** 존재합니다.")
                 col1, col2 = st.columns(2); target_saving_pct = col1.slider("목표 단가 절감률(%)", 0.0, float(best_deal['price_saving_pct']), float(best_deal['price_saving_pct'] / 2), 0.5, "%.1f%%", key=f"slider_{i}"); expected_saving = s_res['user_total_volume'] * s_res['user_avg_price'] * (target_saving_pct / 100); col2.metric(f"예상 절감액 (수입량 {s_res['user_total_volume']:,.0f}KG 기준)", f"${expected_saving:,.0f}")
-                st.markdown("##### **추천 대체 공급처 리스트** (안정성 함께 고려)"); recommended_list = alts[alts['price_saving_pct'] >= target_saving_pct].copy()
+                st.markdown("##### **추천 대체 공급처 리스트**"); recommended_list = alts[alts['price_saving_pct'] >= target_saving_pct].copy()
                 recommended_list.reset_index(drop=True, inplace=True); recommended_list['순번'] = recommended_list.index + 1
                 recommended_list.rename(columns={'avg_unitprice': '평균 단가', 'price_saving_pct': '가격 경쟁력(%)', 'trade_count': '거래 빈도', 'num_importers': '거래처 수', 'stability_score': '공급 안정성'}, inplace=True)
-                st.dataframe(recommended_list[['순번', '평균 단가', '가격 경쟁력(%)', '거래 빈도', '거래처 수', '공급 안정성']], use_container_width=True, column_config={"평균 단가": st.column_config.NumberColumn(format="$%.2f"), "가격 경쟁력(%)": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=alts['price_saving_pct'].max()), "공급 안정성": st.column_config.BarChartColumn(y_min=0, y_max=alts['stability_score'].max())}, hide_index=True)
+                st.dataframe(recommended_list[['순번', '평균 단가', '가격 경쟁력(%)', '거래 빈도', '국내 거래처 수', '공급 안정성']], use_container_width=True, column_config={"평균 단가": st.column_config.NumberColumn(format="$%.2f"), "가격 경쟁력(%)": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=alts['price_saving_pct'].max()), "공급 안정성": st.column_config.BarChartColumn(y_min=0, y_max=alts['stability_score'].max())}, hide_index=True)
             st.markdown("---")
 
 # --- 메인 실행 로직 ---
