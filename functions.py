@@ -45,7 +45,7 @@ def load_company_data():
             df[col] = pd.to_numeric(df[col].astype(str).str.replace(r'[^\d.]', '', regex=True), errors='coerce')
             
         df.dropna(subset=['date', 'volume', 'value'], inplace=True)
-        df = df[df['volume'] > 0]
+        df = df[df['volume'] > 0].copy()
         
         return df if not df.empty else None
     except Exception as e:
@@ -71,6 +71,7 @@ def get_excel_col_name(n):
 
 def create_monthly_frequency_bar_chart(df, title):
     if df is None or df.empty: return None
+    df['date'] = pd.to_datetime(df['date'])
     end_date = datetime.now()
     start_date = end_date - relativedelta(years=1)
     df_filtered = df[(df['date'] >= start_date) & (df['date'] <= end_date)].copy()
@@ -102,8 +103,10 @@ def run_all_analysis(user_input, full_company_data, selected_products, target_im
         importer_cycles = {importer: (df.sort_values('date')['date'].diff().mean().days if len(df)>1 else np.nan) for importer, df in hscode_data.groupby('importer')}
         
         analysis_result['overview'] = {
+            "this_year": this_year,
             "vol_this_year": vol_this_year, "vol_last_year": vol_last_year,
             "price_this_year": price_this_year, "price_last_year": price_last_year,
+            "freq_this_year": len(hscode_data[hscode_data['date'].dt.year == this_year]),
             "importer_cycles": importer_cycles,
             "product_composition": hscode_data.groupby('reported_product_name')['value'].sum().nlargest(10).reset_index()
         }
@@ -231,10 +234,10 @@ def main_dashboard(company_data):
         for hscode in overview_hscodes:
             representative_group = next((g for g in st.session_state.analysis_groups if g['user_input']['HS-CODE'] == hscode), None)
             if representative_group:
-                result_overview = run_all_analysis(representative_group['user_input'], company_data, [], "")
+                result = run_all_analysis(representative_group['user_input'], company_data, [], "")
                 st.markdown(f"#### HS-Code: {hscode}")
-                if 'overview' in result_overview and result_overview['overview']:
-                    o = result_overview['overview']
+                if 'overview' in result and result['overview']:
+                    o = result['overview']
                     cols = st.columns(3)
                     vol_yoy = (o['vol_this_year'] - o['vol_last_year']) / o['vol_last_year'] if o['vol_last_year'] > 0 else np.nan
                     price_yoy = (o['price_this_year'] - o['price_last_year']) / o['price_last_year'] if o['price_last_year'] > 0 else np.nan
@@ -279,7 +282,7 @@ def main_dashboard(company_data):
                 with st.popover("ℹ️"):
                     st.markdown("""**그룹 분류 기준:**\n- **시장 선도 그룹**: 수입금액 기준 누적 70% 차지\n- **유사 규모 경쟁 그룹**: 귀사 순위 기준 상하 ±10%\n- **최저가 달성 그룹**: 평균 단가 하위 15% (최소 2회 이상 수입)""")
             
-            # ... (결과 표시 로직 ) ...
+            # ... (결과 표시 로직 복원) ...
 
             st.markdown("---")
         
