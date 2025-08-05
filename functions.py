@@ -37,6 +37,7 @@ def load_company_data():
         required_cols = ['date', 'volume', 'value', 'reported_product_name', 'export_country', 'exporter', 'importer', 'hs_code']
         if not all(col in df.columns for col in required_cols):
             st.error(f"BigQuery 테이블에 필수 컬럼이 부족합니다. (필수: {required_cols})")
+            st.info(f"실제 컬럼명: {df.columns.tolist()}")
             return None
             
         df['date'] = pd.to_datetime(df['date'], errors='coerce')
@@ -112,13 +113,12 @@ def run_all_analysis(user_input, full_company_data, selected_products, target_im
     if not analysis_data.empty:
         analysis_data['unitPrice'] = analysis_data['value'] / analysis_data['volume']
         
-        # 수정: Avg_UnitPrice를 가중 평균으로 정확하게 계산
         importer_stats = analysis_data.groupby('importer').agg(
             Total_Value=('value', 'sum'), Total_Volume=('volume', 'sum'), Trade_Count=('value', 'count')
         ).reset_index()
-        importer_stats['Avg_UnitPrice'] = importer_stats['Total_Value'] / importer_stats['Total_Volume']
         
-        if not importer_stats.empty:
+        if not importer_stats.empty and importer_stats['Total_Volume'].sum() > 0:
+            importer_stats['Avg_UnitPrice'] = importer_stats['Total_Value'] / importer_stats['Total_Volume']
             importer_stats = importer_stats.sort_values('Total_Value', ascending=False).reset_index(drop=True)
             importer_stats['cum_share'] = importer_stats['Total_Value'].cumsum() / importer_stats['Total_Value'].sum()
             
@@ -227,8 +227,24 @@ def main_dashboard(company_data):
 
     if 'analysis_groups' in st.session_state:
         st.header("1. HS-Code 시장 개요")
-        # ... (Overview 표시 로직) ...
-
+        overview_hscodes = {g['user_input']['HS-CODE'] for g in st.session_state.analysis_groups}
+        for hscode in overview_hscodes:
+            representative_group = next((g for g in st.session_state.analysis_groups if g['user_input']['HS-CODE'] == hscode), None)
+            if representative_group:
+                result_overview = run_all_analysis(representative_group['user_input'], company_data, [], "")
+                st.markdown(f"#### HS-Code: {hscode}")
+                if 'overview' in result_overview and result_overview['overview']:
+                    o = result_overview['overview']
+                    cols = st.columns(3)
+                    vol_yoy = (o['vol_this_year'] - o['vol_last_year']) / o['vol_last_year'] if o['vol_last_year'] > 0 else np.nan
+                    price_yoy = (o['price_this_year'] - o['price_last_year']) / o['price_last_year'] if o['price_last_year'] > 0 else np.nan
+                    cols[0].metric(f"{o['this_year']}년 수입 중량 (KG)", f"{o['vol_this_year']:,.0f}", f"{vol_yoy:.1%}" if pd.notna(vol_yoy) else "N/A", delta_color="inverse")
+                    cols[1].metric(f"{o['this_year']}년 평균 단가 (USD/KG)", f"${o['price_this_year']:.2f}", f"{price_yoy:.1%}" if pd.notna(price_yoy) else "N/A", delta_color="inverse")
+                    avg_cycle = np.nanmean(list(o['importer_cycles'].values()))
+                    cols[2].metric("평균 수입 주기", f"{avg_cycle:.1f} 일" if pd.notna(avg_cycle) else "N/A", help="해당 HS-Code를 수입하는 모든 업체의 평균적인 거래 간격입니다.")
+                else: st.info(f"HS-Code {hscode}에 대한 데이터가 부족하여 Overview 분석을 생략합니다.")
+        st.markdown("---")
+        
         st.header("2. 제품별 상세 경쟁 분석")
         for i, group in enumerate(st.session_state.analysis_groups):
             product_name = group['user_input']['Reported Product Name']
@@ -245,9 +261,26 @@ def main_dashboard(company_data):
             st.markdown("#### PART 1. 마켓 포지션 분석")
             if p['bubble_data'].empty: st.info("포지션 맵을 그리기 위한 데이터가 충분하지 않습니다.")
             else:
-                # ... (버블 차트 및 메트릭 표시) ...
-                pass
+                target_name = st.session_state.get('importer_name_result', '')
+                bubble_data_full = p['bubble_data'].copy()
+                target_row = bubble_data_full[bubble_data_full['importer'] == target_name]
+                top_10 = bubble_data_full.nlargest(10, 'Total_Value')
+                plot_df = pd.concat([target_row, top_10]).drop_duplicates().reset_index(drop=True)
+                
+                all_importers_in_plot = plot_df['importer'].unique()
+                anonymity_map = {name: f"{get_excel_col_name(i)}사" for i, name in enumerate(all_importers_in_plot) if name != target_name}
+                anonymity_map[target_name] = target_name
+                
+                plot_df['Anonymized_Importer'] = plot_df['importer'].apply(lambda x: anonymity_map.get(x, "기타"))
+                st.plotly_chart(px.scatter(plot_df, x='Total_Volume', y='Avg_UnitPrice', size='Total_Value', color='Anonymized_Importer', log_x=True, hover_name='Anonymized_Importer', title="수입사 포지셔닝 맵 (상위 10개사 및 귀사)"), use_container_width=True)
+
+            col1, col2 = st.columns([10, 1]); col1.markdown("##### 수입 업체 그룹별 수입 빈도 분석(최근 1년)"); 
+            with col2:
+                with st.popover("ℹ️"):
+                    st.markdown("""**그룹 분류 기준:**\n- **시장 선도 그룹**: 수입금액 기준 누적 70% 차지\n- **유사 규모 경쟁 그룹**: 귀사 순위 기준 상하 ±10%\n- **최저가 달성 그룹**: 평균 단가 하위 15% (최소 2회 이상 수입)""")
             
+            # ... (결과 표시 로직 ) ...
+
             st.markdown("---")
         
         if st.button("🔄 새로운 분석 시작하기", use_container_width=True):
