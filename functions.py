@@ -234,7 +234,6 @@ def main_dashboard(company_data):
             st.header("📊 분석 결과")
             analysis_mode = st.session_state['analysis_mode_result']
             
-            # Overview는 항상 표시
             processed_hscodes = []
             for product_cleaned_name, group_info in st.session_state.analysis_groups.items():
                 result = group_info.get("result", {})
@@ -287,14 +286,15 @@ def main_dashboard(company_data):
                     with col2:
                         with st.popover("ℹ️"): st.markdown("""**가격 경쟁력 지수란?**\n계절성이나 시장 트렌드 등 시점 요인을 제거한 순수한 가격 경쟁력입니다.\n- **계산식:** `개별 거래 단가 / 해당 월의 시장 평균 단가`\n- **1.0 미만:** 시장 평균보다 저렴하게 구매\n- **1.0 초과:** 시장 평균보다 비싸게 구매""")
                     importer_stats = p_res['importer_stats']; target_name = st.session_state.get('importer_name_result', '')
+                    importer_stats['Anonymized_Importer'] = [to_excel_col(j) if imp != target_name else target_name for j, imp in enumerate(importer_stats['importer'])]
                     log_values = np.log1p(importer_stats['total_volume']); min_size, max_size = 15, 80
                     if log_values.max() > log_values.min(): importer_stats['size'] = min_size + ((log_values - log_values.min()) / (log_values.max() - log_values.min())) * (max_size - min_size)
                     else: importer_stats['size'] = [min_size] * len(importer_stats)
                     x_mean = importer_stats['total_volume'].mean(); y_mean = 1.0
                     fig_pos = go.Figure()
-                    competitors = importer_stats[importer_stats['importer'] != target_name]; fig_pos.add_trace(go.Scatter(x=competitors['total_volume'], y=competitors['price_index'], mode='markers', marker=dict(size=competitors['size'], color='#BDBDBD', opacity=0.5), text=competitors['importer'], hovertemplate='<b>%{text}</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'))
+                    competitors = importer_stats[importer_stats['importer'] != target_name]; fig_pos.add_trace(go.Scatter(x=competitors['total_volume'], y=competitors['price_index'], mode='markers', marker=dict(size=competitors['size'], color='#BDBDBD', opacity=0.5), text=competitors['Anonymized_Importer'], hovertemplate='<b>%{text}</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'))
                     target_df = importer_stats[importer_stats['importer'] == target_name]
-                    if not target_df.empty: fig_pos.add_trace(go.Scatter(x=target_df['total_volume'], y=target_df['price_index'], mode='markers', marker=dict(size=target_df['size'], color='#FF4B4B', opacity=1.0, line=dict(width=2, color='black')), name='귀사(과거 평균)', text=target_df['importer'], hovertemplate='<b>%{text} (평균)</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'))
+                    if not target_df.empty: fig_pos.add_trace(go.Scatter(x=target_df['total_volume'], y=target_df['price_index'], mode='markers', marker=dict(size=target_df['size'], color='#FF4B4B', opacity=1.0, line=dict(width=2, color='black')), name='귀사(과거 평균)', text=target_df['Anonymized_Importer'], hovertemplate='<b>%{text} (평균)</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'))
                     current_txs_norm = p_res.get('current_transactions_normalized')
                     if not current_txs_norm.empty: 
                         fig_pos.add_trace(go.Scatter(x=current_txs_norm['Volume'], y=current_txs_norm['price_index'], mode='markers', marker=dict(symbol='circle', color='rgba(0,0,0,0)', size=20, line=dict(color='black', width=2)), name='입력값', hovertemplate='<b>입력값</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'))
@@ -316,7 +316,8 @@ def main_dashboard(company_data):
                         fig_box = px.box(plot_df_box, x='group_name', y='price_index', title="<b>주요 경쟁 그룹별 가격 경쟁력 분포</b>", labels={'group_name': '경쟁 그룹 유형', 'price_index': '가격 경쟁력 지수'})
                         if not p_res['target_stats'].empty: fig_box.add_hline(y=p_res['target_stats']['price_index'].iloc[0], line_dash="dot", line_color="orange", annotation_text="귀사 평균")
                         if not current_txs_norm.empty:
-                            fig_box.add_trace(go.Scatter(x=np.repeat(plot_df_box['x'].unique()[0], len(current_txs_norm)), y=current_txs_norm['price_index'], mode='markers', marker=dict(color='blue', symbol='x', size=8), name="입력값"))
+                            # Use a stripplot for the user's input values
+                            fig_box.add_trace(go.Box(y=current_txs_norm['price_index'], name='입력값', boxpoints='all', jitter=0.3, pointpos=-0.5, marker_color='blue', line_color='rgba(0,0,0,0)', fillcolor='rgba(0,0,0,0)'))
                         st.plotly_chart(fig_box, use_container_width=True)
                     st.markdown("---")
                     
@@ -344,9 +345,9 @@ def main_dashboard(company_data):
                     if perf_res and not perf_res['user_trend'].empty:
                         fig_perf = go.Figure()
                         fig_perf.add_hline(y=1.0, line_dash="dash", line_color="gray", annotation_text="시장 평균")
-                        fig_perf.add_trace(go.Scatter(x=perf_res['user_trend']['Date'], y=perf_res['user_trend']['price_index'], name='귀사', mode='lines', line=dict(color='black', width=4)))
-                        if not perf_res['market_leader_trend'].empty: fig_perf.add_trace(go.Scatter(x=perf_res['market_leader_trend']['Date'], y=perf_res['market_leader_trend']['price_index'], name='시장 선도 그룹', mode='lines', line=dict(color='blue', width=2)))
-                        if not perf_res['price_achiever_trend'].empty: fig_perf.add_trace(go.Scatter(x=perf_res['price_achiever_trend']['Date'], y=perf_res['price_achiever_trend']['price_index'], name='최저가 달성 그룹', mode='lines', line=dict(color='green', width=2)))
+                        fig_perf.add_trace(go.Scatter(x=perf_res['user_trend']['date'], y=perf_res['user_trend']['price_index'], name='나의 성과', mode='lines', line=dict(color='black', width=4)))
+                        if not perf_res['market_leader_trend'].empty: fig_perf.add_trace(go.Scatter(x=perf_res['market_leader_trend']['date'], y=perf_res['market_leader_trend']['price_index'], name='시장 선도 그룹', mode='lines', line=dict(color='blue', width=2)))
+                        if not perf_res['price_achiever_trend'].empty: fig_perf.add_trace(go.Scatter(x=perf_res['price_achiever_trend']['date'], y=perf_res['price_achiever_trend']['price_index'], name='최저가 달성 그룹', mode='lines', line=dict(color='green', width=2)))
                         fig_perf.update_layout(title="<b>경쟁 그룹별 가격 경쟁력 지수 추이</b>", yaxis_title="가격 경쟁력 지수 (낮을수록 좋음)")
                         st.plotly_chart(fig_perf, use_container_width=True)
                     else:
