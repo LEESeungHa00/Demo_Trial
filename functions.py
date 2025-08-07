@@ -337,4 +337,3 @@ else:
         main_dashboard(company_data)
     else:
         st.error("데이터 로딩에 실패했습니다. 페이지를 새로고침하거나 앱 설정을 확인해주세요.")
-```
