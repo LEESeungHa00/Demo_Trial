@@ -59,7 +59,13 @@ def save_to_google_sheets(purchase_df, importer_name, consent):
         save_data_df['importer_name'] = importer_name; save_data_df['consent'] = consent
         save_data_df['timestamp'] = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S")
         save_data_df['Date'] = pd.to_datetime(save_data_df['Date'])
-        save_data_df['Date']다", icon="✅")
+        save_data_df['Date'] = save_data_df['Date'].dt.strftime('%Y-%m-%d')
+        save_data_df = save_data_df.astype(str)
+        final_columns = ["Date", "Reported Product Name", "HS-Code", "Origin Country", "Exporter", "Volume", "Value", "Incoterms", "importer_name", "consent", "timestamp"]
+        save_data_df = save_data_df[final_columns]
+        if not worksheet.get('A1'): worksheet.update([save_data_df.columns.values.tolist()] + save_data_df.values.tolist(), value_input_option='USER_ENTERED')
+        else: worksheet.append_rows(save_data_df.values.tolist(), value_input_option='USER_ENTERED')
+        st.toast("입력 정보 정상적으로 반영되었습니다.", icon="✅")
         return True
     except gspread.exceptions.APIError as e:
         st.error("Google Sheets API 오류. GCP에서 API 활성화 및 권한을 확인하세요.")
