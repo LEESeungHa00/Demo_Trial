@@ -155,9 +155,7 @@ def run_all_analysis(user_inputs, full_company_data, selected_products, target_i
         market_leaders_trend = analysis_data[analysis_data['importer'].isin(market_leaders_importers)].set_index('date')['price_index'].resample('M').mean().reset_index()
         price_achievers_trend = analysis_data[analysis_data['importer'].isin(price_achievers_importers)].set_index('date')['price_index'].resample('M').mean().reset_index()
         
-        # (오류 수정) 날짜 열 이름을 'date'로 통일
         user_perf_trend.rename(columns={'Date': 'date'}, inplace=True)
-        
         analysis_result['performance_trend'] = {"user_trend": user_perf_trend, "market_leader_trend": market_leaders_trend, "price_achiever_trend": price_achievers_trend}
 
     return analysis_result
@@ -314,12 +312,18 @@ def main_dashboard(company_data):
                         if not df.empty: 
                             df_copy = df.copy(); df_copy['group_name'] = name
                             group_data.append(df_copy[['group_name', 'price_index']])
+                    
+                    # 입력값도 박스플롯에 추가하기 위한 데이터 준비
+                    current_txs_norm = p_res.get('current_transactions_normalized')
+                    if not current_txs_norm.empty:
+                        user_df = current_txs_norm.copy()
+                        user_df['group_name'] = f"{target_name} (입력값)"
+                        group_data.append(user_df.rename(columns={'price_index': 'price_index'})[['group_name', 'price_index']])
+
                     if group_data:
                         plot_df_box = pd.concat(group_data)
                         fig_box = px.box(plot_df_box, x='group_name', y='price_index', title="<b>주요 경쟁 그룹별 가격 경쟁력 분포</b>", labels={'group_name': '경쟁 그룹 유형', 'price_index': '가격 경쟁력 지수'})
                         if not p_res['target_stats'].empty: fig_box.add_hline(y=p_res['target_stats']['price_index'].iloc[0], line_dash="dot", line_color="orange", annotation_text="귀사 평균")
-                        if not current_txs_norm.empty:
-                            fig_box.add_trace(go.Box(y=current_txs_norm['price_index'], name='입력값', boxpoints='all', jitter=0.3, pointpos=-0.5, marker_color='blue', line_color='rgba(0,0,0,0)', fillcolor='rgba(0,0,0,0)'))
                         st.plotly_chart(fig_box, use_container_width=True)
                     st.markdown("---")
                     
