@@ -91,7 +91,7 @@ def to_excel_col(n): # 0부터 시작하는 숫자를 받아 A사, B사... Z사,
     while n >= 0:
         name = chr(ord('A') + n % 26) + name
         n = n // 26 - 1
-    return name + "사
+    return name + "사"
     
 # --- 메인 분석 로직 ---
 def run_all_analysis(user_inputs, full_company_data, selected_products, target_importer_name):
