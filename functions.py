@@ -65,7 +65,7 @@ def save_to_google_sheets(purchase_df, importer_name, consent):
         save_data_df = save_data_df[final_columns]
         if not worksheet.get('A1'): worksheet.update([save_data_df.columns.values.tolist()] + save_data_df.values.tolist(), value_input_option='USER_ENTERED')
         else: worksheet.append_rows(save_data_df.values.tolist(), value_input_option='USER_ENTERED')
-        st.toast("입력 정보가 Google Sheet에 저장되었습니다.", icon="✅")
+        #st.toast("입력 정보가 Google Sheet에 저장되었습니다.", icon="✅")
         return True
     except gspread.exceptions.APIError as e:
         st.error("Google Sheets API 오류. GCP에서 API 활성화 및 권한을 확인하세요.")
@@ -86,6 +86,13 @@ def assign_quadrant_group(row, x_mean, y_mean):
     elif not is_high_volume and not is_high_price: return "효율적 소싱 그룹"
     else: return "원가 우위 그룹"
 
+def to_excel_col(n): # 0부터 시작하는 숫자를 받아 A사, B사... Z사, AA사... 등으로 변환
+    name = ""
+    while n >= 0:
+        name = chr(ord('A') + n % 26) + name
+        n = n // 26 - 1
+    return name + "사
+    
 # --- 메인 분석 로직 ---
 def run_all_analysis(user_inputs, full_company_data, selected_products, target_importer_name):
     analysis_result = {"overview": {}, "diagnosis": {}, "timeseries": {}, "positioning": {}, "supply_chain": {}}
@@ -180,7 +187,7 @@ def main_dashboard(company_data):
         if st.button("➕ 내역 추가하기"):
             new_id = max(row['id'] for row in st.session_state.rows) + 1 if st.session_state.rows else 1; st.session_state.rows.append({'id': new_id}); st.rerun()
         st.markdown("---")
-        consent = st.checkbox("정보 활용 동의", value=st.session_state.get('consent', True), key='consent_widget'); st.session_state['consent'] = consent
+        consent = st.checkbox("정확한 분석을 위해 입력한 데이터가 활용되는 것에 동의합니다.", value=st.session_state.get('consent', True), key='consent_widget'); st.session_state['consent'] = consent
         if st.button("분석하기", type="primary", use_container_width=True):
             all_input_data = []; is_valid = True
             if not importer_name: st.error("⚠️ [입력 오류] 귀사의 업체명을 입력해주세요."); is_valid = False
@@ -190,7 +197,7 @@ def main_dashboard(company_data):
                 all_input_data.append(entry)
                 if not all([entry['Reported Product Name'], entry['HS-Code'], entry['Origin Country'], entry['Exporter']]): st.error(f"⚠️ [입력 오류] {i+1}번째 줄의 필수 항목을 모두 입력해주세요."); is_valid = False
             if is_valid:
-                with st.spinner('입력 데이터를 저장하고 분석을 시작합니다...'):
+                with st.spinner('입력 데이터를 DB에 반영해 분석을 시작합니다...'):
                     purchase_df = pd.DataFrame(all_input_data)
                     if save_to_google_sheets(purchase_df, importer_name, consent):
                         purchase_df['cleaned_name'] = purchase_df['Reported Product Name'].apply(clean_text)
@@ -229,47 +236,120 @@ def main_dashboard(company_data):
             if diag_res:
                 price_diff = (diag_res['user_price'] / diag_res['market_avg_price'] - 1) * 100 if diag_res['market_avg_price'] > 0 else 0
                 cols = st.columns(3); cols[0].metric("이번 거래 단가", f"${diag_res['user_price']:.2f}", f"{price_diff:.1f}% (동월 평균 대비)", delta_color="inverse")
-                cols[1].metric("동월 내 가격 백분위", f"상위 {100-diag_res['percentile']:.0f}%", help="높은 비율일 수록 저렴한 가격입니다.")
-                cols[2].metric("예상 추가 절감액", f"${diag_res['potential_savings']:,.0f}", help=f"동월 상위 10% 평균가(${diag_res['top_10_price']:.2f}) 기준")
+                cols[1].metric("동월 내 가격 백분위", f"상위 {100-diag_res['percentile']:.0f}%", help="100%에 가까울수록 동월 시장에서 저렴하게 구매한 거래입니다.")
+                cols[2].metric("예상 추가 절감 가능 금액", f"${diag_res['potential_savings']:,.0f} 내외", help=f"동월 상위 10% 평균가(${diag_res['top_10_price']:.2f}) 기준")
             else: st.info("이번 거래와 동일한 월의 시장 데이터가 부족하여 진단 요약을 생성할 수 없습니다.")
             st.markdown("---")
 
             st.markdown("#### PART 2. 시계열 시장 동향 및 거래 위치")
             if ts_res and not ts_res['all_trades'].empty:
                 fig_ts = go.Figure()
-                log_volume = np.log1p(ts_res['all_trades']['volume']); bubble_size = 5 + ((log_volume - log_volume.min()) / (log_volume.max() - log_volume.min())) * 25 if log_volume.max() > log_volume.min() else [5]*len(log_volume)
-                fig_ts.add_trace(go.Scatter(x=ts_res['all_trades']['date'], y=ts_res['all_trades']['unitprice'], mode='markers', marker=dict(size=bubble_size, color='lightgray', opacity=0.4), name='과거 거래 내역', hoverinfo='none'))
-                fig_ts.add_trace(go.Scatter(x=ts_res['monthly_avg']['date'], y=ts_res['monthly_avg']['unitprice'], mode='lines', line=dict(color='cornflowerblue', width=3), name='월별 시장 평균가'))
-                current_tx = ts_res['current_transaction']; current_bubble_size = 5 + ((np.log1p(current_tx['volume']) - log_volume.min()) / (log_volume.max() - log_volume.min())) * 25 if log_volume.max() > log_volume.min() else 15
-                fig_ts.add_trace(go.Scatter(x=[current_tx['date']], y=[current_tx['unitprice']], mode='markers', marker=dict(symbol='circle', color='black', size=current_bubble_size * 1.5, line=dict(color='white', width=2)), name='입력한 거래 내역', hovertemplate='<b>입력한 거래 내역</b><br>단가: $%{y:,.2f}<extra></extra>'))
-                fig_ts.update_layout(title="<b>시기별 거래 동향 및 시장가 비교</b>", xaxis_title="거래 시점", yaxis_title="거래 단가 (USD/KG)", showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-                st.plotly_chart(fig_ts, use_container_width=True)
+                all_trades_df = ts_res['all_trades'].copy()
+                target_name = st.session_state.get('importer_name_result', '')
+            
+                # --- 익명화 로직 시작 ---
+                # 1. 시계열 데이터에 있는 모든 고유 수입사 목록을 가져옵니다.
+                unique_importers_ts = all_trades_df['importer'].unique()
+                
+                # 2. 각 수입사 이름에 익명(A사, B사...)을 짝지어주는 딕셔너리(지도)를 만듭니다.
+                #    (단, 귀사의 이름은 바꾸지 않습니다.)
+                anonymity_map_ts = {name: to_excel_col(i) for i, name in enumerate(unique_importers_ts) if name != target_name}
+                anonymity_map_ts[target_name] = target_name
+                
+                # 3. 위에서 만든 지도를 사용하여 'Anonymized_Importer'라는 새 열을 추가합니다.
+                all_trades_df['Anonymized_Importer'] = all_trades_df['importer'].map(anonymity_map_ts)
+                # --- 익명화 로직 끝 ---
+            
+                # 차트의 회색 버블을 그릴 때, 익명화된 이름(Anonymized_Importer)을 hover 정보로 사용합니다.
+                log_volume = np.log1p(all_trades_df['volume'])
+                # ... (버블 사이즈 계산) ...
+                fig_ts.add_trace(go.Scatter(
+                    x=all_trades_df['date'], 
+                    y=all_trades_df['unitprice'], 
+                    mode='markers', 
+                    marker=dict(size=bubble_size, color='lightgray', opacity=0.6), 
+                    name='과거 시장 거래', 
+                    text=all_trades_df['Anonymized_Importer'], # 익명화된 이름 사용
+                    hovertemplate='<b>%{text}</b><br>단가: $%{y:,.2f}<extra></extra>' # hover 시 익명 이름 표시
+                ))
             st.markdown("---")
 
+            # --- main_dashboard 함수 내 PART 3 시각화 부분 ---
+            
             st.markdown("#### PART 3. 경쟁 환경 및 전략 분석")
             if not p_res or p_res['importer_stats'].empty: st.info("경쟁 환경 분석을 위한 데이터가 부족합니다."); continue
             
-            col1, col2 = st.columns([10,1]); col1.markdown("##### **3-1. 시장 내 전략적 위치 (시점 정규화)**")
+            # 3-1. 시장 내 전략적 위치 (시점 정규화)
+            col1, col2 = st.columns([10,1])
+            col1.markdown("##### **3-1. 시장 내 전략적 위치 (시점 정규화)**")
             with col2:
                 with st.popover("ℹ️"): st.markdown("""**가격 경쟁력 지수란?**\n계절성이나 시장 트렌드 등 시점 요인을 제거한 순수한 가격 경쟁력입니다.\n- **계산식:** `개별 거래 단가 / 해당 월의 시장 평균 단가`\n- **1.0 미만:** 시장 평균보다 저렴하게 구매\n- **1.0 초과:** 시장 평균보다 비싸게 구매""")
-            importer_stats = p_res['importer_stats']; target_name = st.session_state.get('importer_name_result', '')
-            log_values = np.log1p(importer_stats['total_volume']); min_size, max_size = 15, 80
-            if log_values.max() > log_values.min(): importer_stats['size'] = min_size + ((log_values - log_values.min()) / (log_values.max() - log_values.min())) * (max_size - min_size)
-            else: importer_stats['size'] = [min_size] * len(importer_stats)
-            x_mean = importer_stats['total_volume'].mean(); y_mean = 1.0
+            
+            importer_stats = p_res['importer_stats']
+            target_name = st.session_state.get('importer_name_result', '')
+            
+            # 차트에 표시할 회사 목록(plot_df) 생성
+            try:
+                target_rank = importer_stats[importer_stats['importer'] == target_name].index[0]
+                rank_margin = max(1, int(len(importer_stats) * 0.1))
+                direct_peers = importer_stats.iloc[max(0, target_rank - rank_margin):min(len(importer_stats), target_rank + rank_margin + 1)]
+            except IndexError:
+                direct_peers = pd.DataFrame()
+            plot_df = pd.concat([importer_stats.head(5), direct_peers, p_res['target_stats']]).drop_duplicates().reset_index(drop=True)
+            
+            # 익명화 이름 생성
+            plot_df['Anonymized_Importer'] = [to_excel_col(j) if imp != target_name else target_name for j, imp in enumerate(plot_df['importer'])]
+            
+            # (수정) 버블 크기 계산 기준을 plot_df로 변경하여 정확도 향상
+            log_values = np.log1p(plot_df['total_value'])
+            min_size, max_size = 15, 80
+            if log_values.max() > log_values.min():
+                plot_df['size'] = min_size + ((log_values - log_values.min()) / (log_values.max() - log_values.min())) * (max_size - min_size)
+            else:
+                plot_df['size'] = [min_size] * len(plot_df)
+            
+            # 차트 생성
+            x_mean = importer_stats['total_volume'].mean() # 시장 평균은 전체 데이터 기준이므로 importer_stats 사용 (정상)
+            y_mean = 1.0
             fig_pos = go.Figure()
-            competitors = importer_stats[importer_stats['importer'] != target_name]; fig_pos.add_trace(go.Scatter(x=competitors['total_volume'], y=competitors['price_index'], mode='markers', marker=dict(size=competitors['size'], color='#BDBDBD', opacity=0.5), text=competitors['importer'], hovertemplate='<b>%{text}</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'))
-            target_df = importer_stats[importer_stats['importer'] == target_name]
-            if not target_df.empty: fig_pos.add_trace(go.Scatter(x=target_df['total_volume'], y=target_df['price_index'], mode='markers', marker=dict(size=target_df['size'], color='#FF4B4B', opacity=1.0, line=dict(width=2, color='black')), name='귀사(과거 평균)', text=target_df['importer'], hovertemplate='<b>%{text} (평균)</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'))
+            
+            # (수정) 데이터 참조를 plot_df로 변경하고, hover 정보에 익명화된 이름 사용
+            competitors = plot_df[plot_df['importer'] != target_name]
+            fig_pos.add_trace(go.Scatter(
+                x=competitors['total_volume'], y=competitors['price_index'], 
+                mode='markers', marker=dict(size=competitors['size'], color='#BDBDBD', opacity=0.5), 
+                text=competitors['Anonymized_Importer'], # 익명 이름 사용
+                hovertemplate='<b>%{text}</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'
+            ))
+            
+            # (수정) 데이터 참조를 plot_df로 변경하고, hover 정보에 익명화된 이름 사용
+            target_df = plot_df[plot_df['importer'] == target_name]
+            if not target_df.empty:
+                fig_pos.add_trace(go.Scatter(
+                    x=target_df['total_volume'], y=target_df['price_index'], 
+                    mode='markers', marker=dict(size=target_df['size'], color='#FF4B4B', opacity=1.0, line=dict(width=2, color='black')), 
+                    name='귀사(과거 평균)', 
+                    text=target_df['Anonymized_Importer'], # 익명 이름 사용 (실제로는 귀사 이름)
+                    hovertemplate='<b>%{text} (평균)</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'
+                ))
+            
             current_tx_norm = p_res.get('current_transaction_normalized')
-            if current_tx_norm: fig_pos.add_trace(go.Scatter(x=[current_tx_norm['total_volume']], y=[current_tx_norm['price_index']], mode='markers', marker=dict(symbol='star', color='black', size=20, line=dict(color='white', width=2)), name='이번 거래', hovertemplate='<b>이번 거래</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'))
-            fig_pos.add_vline(x=x_mean, line_dash="dash", line_color="gray"); fig_pos.add_hline(y=y_mean, line_dash="dash", line_color="gray")
+            if current_tx_norm:
+                fig_pos.add_trace(go.Scatter(
+                    x=[current_tx_norm['total_volume']], y=[current_tx_norm['price_index']], 
+                    mode='markers', marker=dict(symbol='star', color='black', size=20, line=dict(color='white', width=2)), 
+                    name='이번 거래', 
+                    hovertemplate='<b>이번 거래</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'
+                ))
+            
+            fig_pos.add_vline(x=x_mean, line_dash="dash", line_color="gray")
+            fig_pos.add_hline(y=y_mean, line_dash="dash", line_color="gray")
             fig_pos.update_layout(title="<b>수입사 포지셔닝 맵 (시기 보정)</b>", xaxis_title="총 수입 중량 (KG, Log Scale)", yaxis_title="가격 경쟁력 지수 (1.0 = 시장 평균)", showlegend=False, xaxis_type="log")
             st.plotly_chart(fig_pos, use_container_width=True)
 
             col1, col2 = st.columns([10,1]); col1.markdown("##### **3-2. 실질 경쟁 그룹과의 비교**")
             with col2:
-                with st.popover("ℹ️"): st.markdown("""**그룹 분류 기준:**\n- **시장 선도 그룹:** 수입 금액 기준 누적 70% 차지\n- **유사 규모 경쟁 그룹:** 귀사 순위 기준 상하 ±10%\n- **최저가 달성 그룹:** 시기 보정된 '가격 경쟁력 지수' 하위 15%""")
+                with st.popover("ℹ️"): st.markdown("""**그룹 분류 기준:**\n- **시장 선도 그룹:** 수입 금액 기준 누적 70% 차지\n- **유사 규모 경쟁 그룹:** 귀사 순위 기준 상하 ±10%\n- **최저가 달성 그룹:** 시기 보정된 '가격 경쟁력 지수' 하위 15%\n *데이터 특성에 따라 조건에 맞는 경쟁사가 없으면 해당 그룹은 박스 플롯에 표시되지 않을 수 있습니다.""")
             rb_groups = p_res['rule_based_groups']; group_data = []
             for name, df in rb_groups.items():
                 if not df.empty: 
