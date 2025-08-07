@@ -196,12 +196,9 @@ def main_dashboard(company_data):
             if len(st.session_state.rows) > 1 and cols[8].button("삭제", key=f"delete{key_suffix}"): st.session_state.rows.pop(i); st.rerun()
         if st.button("➕ 내역 추가하기"):
             new_id = max(row['id'] for row in st.session_state.rows) + 1 if st.session_state.rows else 1; st.session_state.rows.append({'id': new_id}); st.rerun()
-        
         st.markdown("---")
-        # (수정) 분석 모드 선택 위치 변경
         analysis_mode = st.radio("분석 모드 선택", ["이번 거래 진단", "나의 과거 내역 분석"], key='analysis_mode', horizontal=True)
         st.info(f"**{analysis_mode} 모드:**{'입력한 거래(들)의 경쟁력을 빠르게 진단합니다.' if analysis_mode == '이번 거래 진단' else '입력한 과거 내역 전체의 성과 추이를 시장과 비교 분석합니다.'}")
-        
         consent = st.checkbox("정보 활용 동의", value=st.session_state.get('consent', True), key='consent_widget'); st.session_state['consent'] = consent
         if st.button("분석하기", type="primary", use_container_width=True):
             all_input_data = []; is_valid = True
@@ -231,19 +228,18 @@ def main_dashboard(company_data):
                         st.success("분석 완료!"); st.rerun()
     
     if 'analysis_groups' in st.session_state:
-        # (오류 수정) analysis_mode_result가 없을 경우를 대비
         if 'analysis_mode_result' not in st.session_state:
             st.warning("분석 모드를 확인할 수 없습니다. 새로운 분석을 시작해주세요.")
         else:
             st.header("📊 분석 결과")
             analysis_mode = st.session_state['analysis_mode_result']
             
+            # Overview는 항상 표시
+            processed_hscodes = []
             for product_cleaned_name, group_info in st.session_state.analysis_groups.items():
                 result = group_info.get("result", {})
-                
-                # Overview는 항상 표시
                 overview_res = result.get('overview')
-                if overview_res:
+                if overview_res and overview_res['hscode'] not in processed_hscodes:
                     st.subheader(f"📈 HS-Code {overview_res['hscode']} 시장 개요")
                     o = overview_res; cols = st.columns(3)
                     vol_yoy = (o['vol_this_year'] - o['vol_last_year']) / o['vol_last_year'] if o['vol_last_year'] > 0 else np.nan; price_yoy = (o['price_this_year'] - o['price_last_year']) / o['price_last_year'] if o['price_last_year'] > 0 else np.nan
@@ -253,9 +249,11 @@ def main_dashboard(company_data):
                     if not o['product_composition'].empty:
                         pie_fig = px.pie(o['product_composition'], names=o['product_composition'].index, values=o['product_composition'].values, title='<b>상위 10개 제품 구성 (수입 금액 기준)</b>', hole=0.3)
                         pie_fig.update_traces(textposition='inside', textinfo='percent+label'); st.plotly_chart(pie_fig, use_container_width=True)
-                    st.markdown("---")
-                
+                    st.markdown("---"); processed_hscodes.append(overview_res['hscode'])
+
+            for product_cleaned_name, group_info in st.session_state.analysis_groups.items():
                 st.subheader(f"분석 그룹: \"{group_info['user_input_df']['Reported Product Name'].iloc[0]}\"")
+                result = group_info.get("result", {})
 
                 if analysis_mode == "이번 거래 진단":
                     diag_res, ts_res, p_res, s_res = result.get('diagnosis'), result.get('timeseries'), result.get('positioning'), result.get('supply_chain')
@@ -340,19 +338,19 @@ def main_dashboard(company_data):
                                      column_config={"평균 단가": st.column_config.NumberColumn(format="$%.2f"), "가격 경쟁력(%)": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=alts['price_saving_pct'].max())}, hide_index=True)
                     st.markdown("---")
 
-            elif analysis_mode == "나의 과거 내역 분석":
-                perf_res = result.get('performance_trend')
-                st.markdown("#### 나의 구매 성과 대시보드")
-                if perf_res and not perf_res['user_trend'].empty:
-                    fig_perf = go.Figure()
-                    fig_perf.add_hline(y=1.0, line_dash="dash", line_color="gray", annotation_text="시장 평균")
-                    fig_perf.add_trace(go.Scatter(x=perf_res['user_trend']['Date'], y=perf_res['user_trend']['price_index'], name='귀사', mode='lines', line=dict(color='black', width=4)))
-                    if not perf_res['market_leader_trend'].empty: fig_perf.add_trace(go.Scatter(x=perf_res['market_leader_trend']['Date'], y=perf_res['market_leader_trend']['price_index'], name='시장 선도 그룹', mode='lines', line=dict(color='blue', width=2)))
-                    if not perf_res['price_achiever_trend'].empty: fig_perf.add_trace(go.Scatter(x=perf_res['price_achiever_trend']['Date'], y=perf_res['price_achiever_trend']['price_index'], name='최저가 달성 그룹', mode='lines', line=dict(color='green', width=2)))
-                    fig_perf.update_layout(title="<b>경쟁 그룹별 가격 경쟁력 지수 추이</b>", yaxis_title="가격 경쟁력 지수 (낮을수록 좋음)")
-                    st.plotly_chart(fig_perf, use_container_width=True)
-                else:
-                    st.info("성과 추이 분석을 위한 데이터가 부족합니다.")
+                elif analysis_mode == "나의 과거 내역 분석":
+                    perf_res = result.get('performance_trend')
+                    st.markdown("#### 나의 구매 성과 대시보드")
+                    if perf_res and not perf_res['user_trend'].empty:
+                        fig_perf = go.Figure()
+                        fig_perf.add_hline(y=1.0, line_dash="dash", line_color="gray", annotation_text="시장 평균")
+                        fig_perf.add_trace(go.Scatter(x=perf_res['user_trend']['Date'], y=perf_res['user_trend']['price_index'], name='귀사', mode='lines', line=dict(color='black', width=4)))
+                        if not perf_res['market_leader_trend'].empty: fig_perf.add_trace(go.Scatter(x=perf_res['market_leader_trend']['Date'], y=perf_res['market_leader_trend']['price_index'], name='시장 선도 그룹', mode='lines', line=dict(color='blue', width=2)))
+                        if not perf_res['price_achiever_trend'].empty: fig_perf.add_trace(go.Scatter(x=perf_res['price_achiever_trend']['Date'], y=perf_res['price_achiever_trend']['price_index'], name='최저가 달성 그룹', mode='lines', line=dict(color='green', width=2)))
+                        fig_perf.update_layout(title="<b>경쟁 그룹별 가격 경쟁력 지수 추이</b>", yaxis_title="가격 경쟁력 지수 (낮을수록 좋음)")
+                        st.plotly_chart(fig_perf, use_container_width=True)
+                    else:
+                        st.info("성과 추이 분석을 위한 데이터가 부족합니다.")
 
 # --- 메인 실행 로직 ---
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
