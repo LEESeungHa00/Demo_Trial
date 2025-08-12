@@ -277,7 +277,7 @@ def main_dashboard(company_data):
                         current_txs = ts_res['current_transactions']
                         log_volume_current = np.log1p(current_txs['Volume'])
                         current_bubble_sizes = [5 + ((s - log_volume.min()) / (log_volume.max() - log_volume.min())) * 25 if log_volume.max() > log_volume.min() else 15 for s in log_volume_current]
-                        fig_ts.add_trace(go.Scatter(x=current_txs['Date'], y=current_txs['unitprice'], mode='markers', marker=dict(symbol='circle', color='rgba(0,0,0,0)', size=[s * 1.5 for s in current_bubble_sizes], line=dict(color='magenta', width=10)), name='입력값', hovertemplate='<b>입력값</b><br>단가: $%{y:,.2f}<extra></extra>'))
+                        fig_ts.add_trace(go.Scatter(x=current_txs['Date'], y=current_txs['unitprice'], mode='markers', marker=dict(symbol='circle', color='rgba(0,0,0,0)', size=[s * 1.5 for s in current_bubble_sizes], line=dict(color='magenta', width=4)), name='입력값', hovertemplate='<b>입력값</b><br>단가: $%{y:,.2f}<extra></extra>'))
                         fig_ts.update_layout(title="<b>시기별 거래 동향 및 시장가 비교</b>", xaxis_title="거래 시점", yaxis_title="거래 단가 (USD/KG)", showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                         st.plotly_chart(fig_ts, use_container_width=True)
                     st.markdown("---")
@@ -298,7 +298,7 @@ def main_dashboard(company_data):
                     if not target_df.empty: fig_pos.add_trace(go.Scatter(x=target_df['total_volume'], y=target_df['price_index'], mode='markers', marker=dict(size=target_df['size'], color='#FF4B4B', opacity=1.0, line=dict(width=2, color='black')), name='귀사(과거 평균)', text=target_df['Anonymized_Importer'], hovertemplate='<b>%{text} (평균)</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'))
                     current_txs_norm = p_res.get('current_transactions_normalized')
                     if not current_txs_norm.empty: 
-                        fig_pos.add_trace(go.Scatter(x=current_txs_norm['Volume'], y=current_txs_norm['price_index'], mode='markers', marker=dict(symbol='circle', color='rgba(0,0,0,0)', size=20, line=dict(color='black', width=2)), name='입력값', hovertemplate='<b>입력값</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'))
+                        fig_pos.add_trace(go.Scatter(x=current_txs_norm['Volume'], y=current_txs_norm['price_index'], mode='markers', marker=dict(symbol='circle', color='rgba(0,0,0,0)', size=20, line=dict(color='magenta', width=3)), name='입력값', hovertemplate='<b>입력값</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'))
                     fig_pos.add_vline(x=x_mean, line_dash="dash", line_color="gray"); fig_pos.add_hline(y=y_mean, line_dash="dash", line_color="gray")
                     fig_pos.update_layout(title="<b>수입사 포지셔닝 맵 (시기 보정)</b>", xaxis_title="총 수입 중량 (KG, Log Scale)", yaxis_title="가격 경쟁력 지수 (1.0 = 시장 평균)", showlegend=False, xaxis_type="log")
                     st.plotly_chart(fig_pos, use_container_width=True)
