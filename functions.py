@@ -5,6 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import re
 from datetime import datetime
+from dateutil.relativedelta import relativedelta
 from google.oauth2.service_account import Credentials
 from pandas_gbq import read_gbq
 import gspread
@@ -85,24 +86,6 @@ def to_excel_col(n):
         name = chr(ord('A') + n % 26) + name
         n = n // 26 - 1
     return name + "사"
-
-@st.cache_data
-def create_excel_template():
-    template_df = pd.DataFrame({
-        "수입일": ["2025-08-10"],
-        "제품 상세명": ["샘플 위스키 12년"],
-        "HS-CODE": ["220830"],
-        "원산지": ["United Kingdom"],
-        "수출업체": ["DIAGEO"],
-        "수입 중량(KG)": [1500.50],
-        "총 수입금액(USD)": [18000.75],
-        "Incoterms": ["FOB"]
-    })
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        template_df.to_excel(writer, index=False, sheet_name='Sheet1')
-    processed_data = output.getvalue()
-    return processed_data
 
 # --- 메인 분석 로직 ---
 def run_all_analysis(user_inputs, full_company_data, selected_products, target_importer_name, analysis_mode):
@@ -223,12 +206,18 @@ def main_dashboard(company_data):
         st.markdown("##### **1-2. 엑셀 파일로 업로드하기**")
         col1, col2 = st.columns(2)
         with col1:
-            st.download_button(
-                label="📥 엑셀 템플릿 다운로드",
-                data=create_excel_template(),
-                file_name="수입내역_입력_템플릿.xlsx",
-                mime="application/vnd.ms-excel"
-            )
+            try:
+                # 미리 준비된 '수입내역_입력_템플릿.xlsx' 파일을 읽어 다운로드 버튼을 생성합니다.
+                # 이 파일은 파이썬 스크립트와 동일한 위치에 있어야 합니다.
+                with open("수입내역_입력_템플릿.xlsx", "rb") as file:
+                    st.download_button(
+                        label="📥 엑셀 템플릿 다운로드",
+                        data=file,
+                        file_name="수입내역_입력_템플릿.xlsx",
+                        mime="application/vnd.ms-excel"
+                    )
+            except FileNotFoundError:
+                st.warning("엑셀 템플릿 파일('수입내역_입력_템플릿.xlsx')을 찾을 수 없습니다.")
         with col2:
             uploaded_file = st.file_uploader("📂 템플릿에 맞춰 작성한 엑셀 파일 업로드", type=['xlsx'])
 
