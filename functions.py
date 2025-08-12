@@ -5,11 +5,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 import re
 from datetime import datetime
-from dateutil.relativedelta import relativedelta
 from google.oauth2.service_account import Credentials
 from pandas_gbq import read_gbq
 import gspread
 from zoneinfo import ZoneInfo
+from io import BytesIO
 
 # --- 페이지 초기 설정 ---
 st.set_page_config(layout="wide", page_title="수입 경쟁력 진단 솔루션")
@@ -23,25 +23,6 @@ SCOPES = [
 
 # --- 데이터 로딩 (BigQuery) ---
 @st.cache_data(ttl=3600)
-@st.cache_data
-def create_excel_template():
-    template_df = pd.DataFrame({
-        "수입일": ["2025-08-10"],
-        "제품 상세명": ["샘플 위스키 12년"],
-        "HS-CODE": ["220830"],
-        "원산지": ["United Kingdom"],
-        "수출업체": ["DIAGEO"],
-        "수입 중량(KG)": [1500.50],
-        "총 수입금액(USD)": [18000.75],
-        "Incoterms": ["FOB"]
-    })
-    output = BytesIO()
-    # 엑셀 파일로 변환하기 위해 xlsxwriter 엔진 사용
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        template_df.to_excel(writer, index=False, sheet_name='Sheet1')
-    processed_data = output.getvalue()
-    return processed_data
-    
 def load_company_data():
     """Google BigQuery에서 데이터를 불러오고 기본 전처리를 수행합니다."""
     try:
@@ -84,7 +65,7 @@ def save_to_google_sheets(purchase_df, importer_name, consent):
         save_data_df = save_data_df[final_columns]
         if not worksheet.get('A1'): worksheet.update([save_data_df.columns.values.tolist()] + save_data_df.values.tolist(), value_input_option='USER_ENTERED')
         else: worksheet.append_rows(save_data_df.values.tolist(), value_input_option='USER_ENTERED')
-        st.toast("입력 정보가 성공적으로 반영되었습니다다.", icon="✅")
+        st.toast("입력 정보가 Google Sheet에 저장되었습니다.", icon="✅")
         return True
     except gspread.exceptions.APIError as e:
         st.error("Google Sheets API 오류. GCP에서 API 활성화 및 권한을 확인하세요.")
@@ -104,6 +85,24 @@ def to_excel_col(n):
         name = chr(ord('A') + n % 26) + name
         n = n // 26 - 1
     return name + "사"
+
+@st.cache_data
+def create_excel_template():
+    template_df = pd.DataFrame({
+        "수입일": ["2025-08-10"],
+        "제품 상세명": ["샘플 위스키 12년"],
+        "HS-CODE": ["220830"],
+        "원산지": ["United Kingdom"],
+        "수출업체": ["DIAGEO"],
+        "수입 중량(KG)": [1500.50],
+        "총 수입금액(USD)": [18000.75],
+        "Incoterms": ["FOB"]
+    })
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        template_df.to_excel(writer, index=False, sheet_name='Sheet1')
+    processed_data = output.getvalue()
+    return processed_data
 
 # --- 메인 분석 로직 ---
 def run_all_analysis(user_inputs, full_company_data, selected_products, target_importer_name, analysis_mode):
@@ -242,29 +241,23 @@ def main_dashboard(company_data):
             all_input_data = []
             is_valid = True
             
-            # 직접 입력 데이터 수집
             for i, row in enumerate(st.session_state.rows):
                 key_suffix = f"_{row['id']}"; 
-                # 비어있는 기본 행이 아닌 경우에만 데이터 추가
                 if st.session_state.get(f'product_name{key_suffix}'):
                     entry = { "Date": st.session_state.get(f'date{key_suffix}'), "Reported Product Name": st.session_state.get(f'product_name{key_suffix}'), "HS-Code": st.session_state.get(f'hscode{key_suffix}'), "Origin Country": st.session_state.get(f'origin{key_suffix}'), "Exporter": st.session_state.get(f'exporter{key_suffix}'), "Volume": st.session_state.get(f'volume{key_suffix}'), "Value": st.session_state.get(f'value{key_suffix}'), "Incoterms": st.session_state.get(f'incoterms{key_suffix}')}
                     all_input_data.append(entry)
 
-            # 엑셀 업로드 데이터 수집
             if uploaded_file is not None:
                 try:
                     excel_df = pd.read_excel(uploaded_file)
-                    # 템플릿 컬럼명과 일치하는지 확인 및 이름 변경
                     excel_cols = {"수입일": "Date", "제품 상세명": "Reported Product Name", "HS-CODE": "HS-Code", "원산지": "Origin Country", "수출업체": "Exporter", "수입 중량(KG)": "Volume", "총 수입금액(USD)": "Value", "Incoterms": "Incoterms"}
                     excel_df.rename(columns=excel_cols, inplace=True)
                     all_input_data.extend(excel_df.to_dict('records'))
                 except Exception as e:
-                    st.error(f"엑셀 파일 처리 중 오류가 발생했습니다: {e}")
-                    is_valid = False
+                    st.error(f"엑셀 파일 처리 중 오류가 발생했습니다: {e}"); is_valid = False
             
             if not all_input_data:
-                st.error("⚠️ [입력 오류] 분석할 데이터가 없습니다. 직접 입력하거나 엑셀 파일을 업로드해주세요.")
-                is_valid = False
+                st.error("⚠️ [입력 오류] 분석할 데이터가 없습니다. 직접 입력하거나 엑셀 파일을 업로드해주세요."); is_valid = False
 
             if not importer_name: st.error("⚠️ [입력 오류] 귀사의 업체명을 입력해주세요."); is_valid = False
             if not consent: st.warning("⚠️ 정보 활용 동의에 체크해주세요."); is_valid = False
@@ -337,7 +330,7 @@ def main_dashboard(company_data):
                         current_txs = ts_res['current_transactions']
                         log_volume_current = np.log1p(current_txs['Volume'])
                         current_bubble_sizes = [5 + ((s - log_volume.min()) / (log_volume.max() - log_volume.min())) * 25 if log_volume.max() > log_volume.min() else 15 for s in log_volume_current]
-                        fig_ts.add_trace(go.Scatter(x=current_txs['Date'], y=current_txs['unitprice'], mode='markers', marker=dict(symbol='circle', color='rgba(0,0,0,0)', size=[s * 1.5 for s in current_bubble_sizes], line=dict(color='magenta', width=4)), name='입력값', hovertemplate='<b>입력값</b><br>단가: $%{y:,.2f}<extra></extra>'))
+                        fig_ts.add_trace(go.Scatter(x=current_txs['Date'], y=current_txs['unitprice'], mode='markers', marker=dict(symbol='circle', color='rgba(0,0,0,0)', size=[s * 1.5 for s in current_bubble_sizes], line=dict(color='black', width=2)), name='입력값', hovertemplate='<b>입력값</b><br>단가: $%{y:,.2f}<extra></extra>'))
                         fig_ts.update_layout(title="<b>시기별 거래 동향 및 시장가 비교</b>", xaxis_title="거래 시점", yaxis_title="거래 단가 (USD/KG)", showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                         st.plotly_chart(fig_ts, use_container_width=True)
                     st.markdown("---")
@@ -358,7 +351,7 @@ def main_dashboard(company_data):
                     if not target_df.empty: fig_pos.add_trace(go.Scatter(x=target_df['total_volume'], y=target_df['price_index'], mode='markers', marker=dict(size=target_df['size'], color='#FF4B4B', opacity=1.0, line=dict(width=2, color='black')), name='귀사(과거 평균)', text=target_df['Anonymized_Importer'], hovertemplate='<b>%{text} (평균)</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'))
                     current_txs_norm = p_res.get('current_transactions_normalized')
                     if not current_txs_norm.empty: 
-                        fig_pos.add_trace(go.Scatter(x=current_txs_norm['Volume'], y=current_txs_norm['price_index'], mode='markers', marker=dict(symbol='circle', color='rgba(0,0,0,0)', size=20, line=dict(color='magenta', width=3)), name='입력값', hovertemplate='<b>입력값</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'))
+                        fig_pos.add_trace(go.Scatter(x=current_txs_norm['Volume'], y=current_txs_norm['price_index'], mode='markers', marker=dict(symbol='circle', color='rgba(0,0,0,0)', size=20, line=dict(color='black', width=2)), name='입력값', hovertemplate='<b>입력값</b><br>가격 경쟁력 지수: %{y:.2f}<extra></extra>'))
                     fig_pos.add_vline(x=x_mean, line_dash="dash", line_color="gray"); fig_pos.add_hline(y=y_mean, line_dash="dash", line_color="gray")
                     fig_pos.update_layout(title="<b>수입사 포지셔닝 맵 (시기 보정)</b>", xaxis_title="총 수입 중량 (KG, Log Scale)", yaxis_title="가격 경쟁력 지수 (1.0 = 시장 평균)", showlegend=False, xaxis_type="log")
                     st.plotly_chart(fig_pos, use_container_width=True)
@@ -373,11 +366,9 @@ def main_dashboard(company_data):
                             df_copy = df.copy(); df_copy['group_name'] = name
                             group_data.append(df_copy[['group_name', 'price_index']])
                     
-                    # 입력값도 박스플롯에 추가하기 위한 데이터 준비
-                    current_txs_norm = p_res.get('current_transactions_normalized')
                     if not current_txs_norm.empty:
                         user_df = current_txs_norm.copy()
-                        user_df['group_name'] = f"{target_name} 나의 거래 가격"
+                        user_df['group_name'] = f"{target_name} (입력값)"
                         group_data.append(user_df.rename(columns={'price_index': 'price_index'})[['group_name', 'price_index']])
 
                     if group_data:
