@@ -23,6 +23,25 @@ SCOPES = [
 
 # --- 데이터 로딩 (BigQuery) ---
 @st.cache_data(ttl=3600)
+@st.cache_data
+def create_excel_template():
+    template_df = pd.DataFrame({
+        "수입일": ["2025-08-10"],
+        "제품 상세명": ["샘플 위스키 12년"],
+        "HS-CODE": ["220830"],
+        "원산지": ["United Kingdom"],
+        "수출업체": ["DIAGEO"],
+        "수입 중량(KG)": [1500.50],
+        "총 수입금액(USD)": [18000.75],
+        "Incoterms": ["FOB"]
+    })
+    output = BytesIO()
+    # 엑셀 파일로 변환하기 위해 xlsxwriter 엔진 사용
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        template_df.to_excel(writer, index=False, sheet_name='Sheet1')
+    processed_data = output.getvalue()
+    return processed_data
+    
 def load_company_data():
     """Google BigQuery에서 데이터를 불러오고 기본 전처리를 수행합니다."""
     try:
