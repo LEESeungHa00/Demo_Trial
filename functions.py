@@ -175,6 +175,9 @@ def main_dashboard(company_data):
     st.title("📈 수입 경쟁력 진단 솔루션")
     with st.expander("STEP 1: 분석 정보 입력", expanded='analysis_groups' not in st.session_state):
         importer_name = st.text_input("1. 귀사의 업체명을 입력해주세요.", key="importer_name_input").upper()
+        
+        st.markdown("---")
+        st.markdown("##### **1-1. 직접 입력하기**")
         if 'rows' not in st.session_state: st.session_state['rows'] = [{'id': 1}]
         header_cols = st.columns([1.5, 3, 1, 2, 2, 1, 1, 1, 0.5]); headers = ["수입일", "제품 상세명", "HS-CODE", "원산지", "수출업체", "수입 중량(KG)", "총 수입금액(USD)", "Incoterms", "삭제"]
         for col, header in zip(header_cols, headers): col.markdown(f"**{header}**")
@@ -193,22 +196,60 @@ def main_dashboard(company_data):
             else: st.session_state[f'exporter{key_suffix}'] = exporter_val_selected
             st.session_state[f'volume{key_suffix}'] = cols[5].number_input(f"volume_widget{key_suffix}", min_value=0.01, format="%.2f", value=st.session_state.get(f'volume{key_suffix}', 1000.0), key=f"volume_widget_k{key_suffix}", label_visibility="collapsed")
             st.session_state[f'value{key_suffix}'] = cols[6].number_input(f"value_widget{key_suffix}", min_value=0.01, format="%.2f", value=st.session_state.get(f'value{key_suffix}', 10000.0), key=f"value_widget_k{key_suffix}", label_visibility="collapsed")
-            st.session_state[f'incoterms{key_suffix}'] = cols[7].selectbox(f"incoterms_widget{key_suffix}", ["CIF","FOB", "CFR", "EXW", "DDP", "기타"], index=["CIF", "FOB", "CFR", "EXW", "DDP", "기타"].index(st.session_state.get(f'incoterms{key_suffix}', 'CIF')), key=f"incoterms_widget_k{key_suffix}", label_visibility="collapsed")
+            st.session_state[f'incoterms{key_suffix}'] = cols[7].selectbox(f"incoterms_widget{key_suffix}", ["FOB", "CFR", "CIF", "EXW", "DDP", "기타"], index=["FOB", "CFR", "CIF", "EXW", "DDP", "기타"].index(st.session_state.get(f'incoterms{key_suffix}', 'FOB')), key=f"incoterms_widget_k{key_suffix}", label_visibility="collapsed")
             if len(st.session_state.rows) > 1 and cols[8].button("삭제", key=f"delete{key_suffix}"): st.session_state.rows.pop(i); st.rerun()
         if st.button("➕ 내역 추가하기"):
             new_id = max(row['id'] for row in st.session_state.rows) + 1 if st.session_state.rows else 1; st.session_state.rows.append({'id': new_id}); st.rerun()
+        
         st.markdown("---")
-        analysis_mode = st.radio("분석 모드 선택", ["이번 거래 진단", "나의 과거 내역 분석"], key='analysis_mode', horizontal=True)
+        st.markdown("##### **1-2. 엑셀 파일로 업로드하기**")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                label="📥 엑셀 템플릿 다운로드",
+                data=create_excel_template(),
+                file_name="수입내역_입력_템플릿.xlsx",
+                mime="application/vnd.ms-excel"
+            )
+        with col2:
+            uploaded_file = st.file_uploader("📂 템플릿에 맞춰 작성한 엑셀 파일 업로드", type=['xlsx'])
+
+        st.markdown("---")
+        analysis_mode = st.radio("2. 분석 모드 선택", ["이번 거래 진단", "나의 과거 내역 분석"], key='analysis_mode', horizontal=True)
         st.info(f"**{analysis_mode} 모드:**{'입력한 거래(들)의 경쟁력을 빠르게 진단합니다.' if analysis_mode == '이번 거래 진단' else '입력한 과거 내역 전체의 성과 추이를 시장과 비교 분석합니다.'}")
         consent = st.checkbox("정보 활용 동의", value=st.session_state.get('consent', True), key='consent_widget'); st.session_state['consent'] = consent
+        
         if st.button("분석하기", type="primary", use_container_width=True):
-            all_input_data = []; is_valid = True
+            all_input_data = []
+            is_valid = True
+            
+            # 직접 입력 데이터 수집
+            for i, row in enumerate(st.session_state.rows):
+                key_suffix = f"_{row['id']}"; 
+                # 비어있는 기본 행이 아닌 경우에만 데이터 추가
+                if st.session_state.get(f'product_name{key_suffix}'):
+                    entry = { "Date": st.session_state.get(f'date{key_suffix}'), "Reported Product Name": st.session_state.get(f'product_name{key_suffix}'), "HS-Code": st.session_state.get(f'hscode{key_suffix}'), "Origin Country": st.session_state.get(f'origin{key_suffix}'), "Exporter": st.session_state.get(f'exporter{key_suffix}'), "Volume": st.session_state.get(f'volume{key_suffix}'), "Value": st.session_state.get(f'value{key_suffix}'), "Incoterms": st.session_state.get(f'incoterms{key_suffix}')}
+                    all_input_data.append(entry)
+
+            # 엑셀 업로드 데이터 수집
+            if uploaded_file is not None:
+                try:
+                    excel_df = pd.read_excel(uploaded_file)
+                    # 템플릿 컬럼명과 일치하는지 확인 및 이름 변경
+                    excel_cols = {"수입일": "Date", "제품 상세명": "Reported Product Name", "HS-CODE": "HS-Code", "원산지": "Origin Country", "수출업체": "Exporter", "수입 중량(KG)": "Volume", "총 수입금액(USD)": "Value", "Incoterms": "Incoterms"}
+                    excel_df.rename(columns=excel_cols, inplace=True)
+                    all_input_data.extend(excel_df.to_dict('records'))
+                except Exception as e:
+                    st.error(f"엑셀 파일 처리 중 오류가 발생했습니다: {e}")
+                    is_valid = False
+            
+            if not all_input_data:
+                st.error("⚠️ [입력 오류] 분석할 데이터가 없습니다. 직접 입력하거나 엑셀 파일을 업로드해주세요.")
+                is_valid = False
+
             if not importer_name: st.error("⚠️ [입력 오류] 귀사의 업체명을 입력해주세요."); is_valid = False
             if not consent: st.warning("⚠️ 정보 활용 동의에 체크해주세요."); is_valid = False
-            for i, row in enumerate(st.session_state.rows):
-                key_suffix = f"_{row['id']}"; entry = { "Date": st.session_state.get(f'date{key_suffix}'), "Reported Product Name": st.session_state.get(f'product_name{key_suffix}'), "HS-Code": st.session_state.get(f'hscode{key_suffix}'), "Origin Country": st.session_state.get(f'origin{key_suffix}'), "Exporter": st.session_state.get(f'exporter{key_suffix}'), "Volume": st.session_state.get(f'volume{key_suffix}'), "Value": st.session_state.get(f'value{key_suffix}'), "Incoterms": st.session_state.get(f'incoterms{key_suffix}')}
-                all_input_data.append(entry)
-                if not all([entry['Reported Product Name'], entry['HS-Code'], entry['Origin Country'], entry['Exporter']]): st.error(f"⚠️ [입력 오류] {i+1}번째 줄의 필수 항목을 모두 입력해주세요."); is_valid = False
+            
             if is_valid:
                 with st.spinner('입력 데이터를 저장하고 분석을 시작합니다...'):
                     purchase_df = pd.DataFrame(all_input_data)
