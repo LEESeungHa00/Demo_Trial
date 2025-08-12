@@ -7,3 +7,4 @@ google-auth-oauthlib
 google-cloud-bigquery
 pandas-gbq
 scikit-learn
+io
