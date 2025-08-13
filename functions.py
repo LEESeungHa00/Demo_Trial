@@ -66,7 +66,7 @@ def save_to_google_sheets(purchase_df, importer_name, consent):
         save_data_df = save_data_df[final_columns]
         if not worksheet.get('A1'): worksheet.update([save_data_df.columns.values.tolist()] + save_data_df.values.tolist(), value_input_option='USER_ENTERED')
         else: worksheet.append_rows(save_data_df.values.tolist(), value_input_option='USER_ENTERED')
-        st.toast("입력 정보가 Google Sheet에 저장되었습니다.", icon="✅")
+        st.toast("입력 정보가 정상 반영되어 분석이 진행됩니다다.", icon="✅")
         return True
     except gspread.exceptions.APIError as e:
         st.error("Google Sheets API 오류. GCP에서 API 활성화 및 권한을 확인하세요.")
@@ -176,12 +176,31 @@ def main_dashboard(company_data):
     st.title("📈 수입 경쟁력 진단 솔루션")
     with st.expander("STEP 1: 분석 정보 입력", expanded='analysis_groups' not in st.session_state):
         importer_name = st.text_input("1. 귀사의 업체명을 입력해주세요.", key="importer_name_input").upper()
-        
+
+
         st.markdown("---")
-        st.markdown("##### **1-1. 직접 입력하기**")
+        st.markdown("##### **1-1. 엑셀 파일로 업로드하기**")
+        col1, col2 = st.columns(2)
+        with col1:
+            try:
+                with open("수입내역_입력_템플릿.xlsx", "rb") as file:
+                    st.download_button(label="📥 엑셀 템플릿 다운로드", data=file, file_name="수입내역_입력_템플릿.xlsx", mime="application/vnd.ms-excel")
+            except FileNotFoundError:
+                st.warning("엑셀 템플릿 파일('수입내역_입력_템플릿.xlsx')을 찾을 수 없습니다.")
+        with col2:
+            uploaded_file = st.file_uploader("📂 템플렛 양식에 작성한 엑셀 파일 업로드", type=['xlsx'])
+            
+        st.markdown("---")
+        st.markdown("##### **1-2. 직접 입력하기**")
+        
+        headers_and_tooltips = {"수입일": "거래가 발생한 날짜(YYYY-MM-DD)를 선택하세요.", "제품 상세명": "브랜드, 연산 등 제품을 특정할 수 있는 상세명을 입력하세요. (예: Glenfiddich 12YO)", "HS-CODE": "분석하고 싶은 HS-CODE 6자리를 입력하세요. (예: 220830)", "원산지": "제품이 생산된 국가를 선택하거나 직접 입력하세요.", "수출업체": "거래한 수출업체명을 선택하거나 직접 입력하세요.", "수입 중량(KG)": "수입한 총 중량을 킬로그램(KG) 단위로 입력하세요.", "총 수입금액(USD)": "수입에 지불한 총 금액을 미국 달러(USD) 단위로 입력하세요.", "Incoterms": "거래에 적용된 인코텀즈 조건을 선택하세요.", "삭제": "해당 행을 삭제합니다."}
+        header_cols = st.columns([1.5, 3, 1, 2, 2, 1, 1, 1, 0.5])
+        for col, (header, tooltip) in zip(header_cols, headers_and_tooltips.items()):
+            col.markdown(f"**{header}**")
+            with col:
+                with st.popover("ℹ️", use_container_width=True): st.markdown(tooltip)
+        
         if 'rows' not in st.session_state: st.session_state['rows'] = [{'id': 1}]
-        header_cols = st.columns([1.5, 3, 1, 2, 2, 1, 1, 1, 0.5]); headers = ["수입일", "제품 상세명", "HS-CODE", "원산지", "수출업체", "수입 중량(KG)", "총 수입금액(USD)", "Incoterms", "삭제"]
-        for col, header in zip(header_cols, headers): col.markdown(f"**{header}**")
         for i, row in enumerate(st.session_state.rows):
             key_suffix = f"_{row['id']}"; cols = st.columns([1.5, 3, 1, 2, 2, 1, 1, 1, 0.5])
             st.session_state[f'date{key_suffix}'] = cols[0].date_input(f"date_widget{key_suffix}", value=st.session_state.get(f'date{key_suffix}', datetime.now().date()), key=f"date_widget_k{key_suffix}", label_visibility="collapsed")
@@ -197,29 +216,12 @@ def main_dashboard(company_data):
             else: st.session_state[f'exporter{key_suffix}'] = exporter_val_selected
             st.session_state[f'volume{key_suffix}'] = cols[5].number_input(f"volume_widget{key_suffix}", min_value=0.01, format="%.2f", value=st.session_state.get(f'volume{key_suffix}', 1000.0), key=f"volume_widget_k{key_suffix}", label_visibility="collapsed")
             st.session_state[f'value{key_suffix}'] = cols[6].number_input(f"value_widget{key_suffix}", min_value=0.01, format="%.2f", value=st.session_state.get(f'value{key_suffix}', 10000.0), key=f"value_widget_k{key_suffix}", label_visibility="collapsed")
-            st.session_state[f'incoterms{key_suffix}'] = cols[7].selectbox(f"incoterms_widget{key_suffix}", ["FOB", "CFR", "CIF", "EXW", "DDP", "기타"], index=["FOB", "CFR", "CIF", "EXW", "DDP", "기타"].index(st.session_state.get(f'incoterms{key_suffix}', 'FOB')), key=f"incoterms_widget_k{key_suffix}", label_visibility="collapsed")
+            st.session_state[f'incoterms{key_suffix}'] = cols[7].selectbox(f"incoterms_widget{key_suffix}", ["CIF", "FOB", "CFR", "EXW", "DDP", "기타"], index=["CIF", "FOB", "CFR", "EXW", "DDP", "기타"].index(st.session_state.get(f'incoterms{key_suffix}', 'CIF')), key=f"incoterms_widget_k{key_suffix}", label_visibility="collapsed")
             if len(st.session_state.rows) > 1 and cols[8].button("삭제", key=f"delete{key_suffix}"): st.session_state.rows.pop(i); st.rerun()
         if st.button("➕ 내역 추가하기"):
             new_id = max(row['id'] for row in st.session_state.rows) + 1 if st.session_state.rows else 1; st.session_state.rows.append({'id': new_id}); st.rerun()
         
-        st.markdown("---")
-        st.markdown("##### **1-2. 엑셀 파일로 업로드하기**")
-        col1, col2 = st.columns(2)
-        with col1:
-            try:
-                # 미리 준비된 '수입내역_입력_템플릿.xlsx' 파일을 읽어 다운로드 버튼을 생성합니다.
-                # 이 파일은 파이썬 스크립트와 동일한 위치에 있어야 합니다.
-                with open("수입내역_입력_템플릿.xlsx", "rb") as file:
-                    st.download_button(
-                        label="📥 엑셀 템플릿 다운로드",
-                        data=file,
-                        file_name="수입내역_입력_템플릿.xlsx",
-                        mime="application/vnd.ms-excel"
-                    )
-            except FileNotFoundError:
-                st.warning("엑셀 템플릿 파일('수입내역_입력_템플릿.xlsx')을 찾을 수 없습니다.")
-        with col2:
-            uploaded_file = st.file_uploader("📂 템플릿에 맞춰 작성한 엑셀 파일 업로드", type=['xlsx'])
+
 
         st.markdown("---")
         analysis_mode = st.radio("2. 분석 모드 선택", ["이번 거래 진단", "나의 과거 내역 분석"], key='analysis_mode', horizontal=True)
@@ -238,7 +240,9 @@ def main_dashboard(company_data):
 
             if uploaded_file is not None:
                 try:
-                    excel_df = pd.read_excel(uploaded_file)
+                    excel_df = pd.read_excel(uploaded_file, header=1) # B2부터 읽기 위해 header=1 사용
+                    if 'Unnamed: 0' in excel_df.columns:
+                        excel_df = excel_df.drop(columns=['Unnamed: 0'])
                     excel_cols = {"수입일": "Date", "제품 상세명": "Reported Product Name", "HS-CODE": "HS-Code", "원산지": "Origin Country", "수출업체": "Exporter", "수입 중량(KG)": "Volume", "총 수입금액(USD)": "Value", "Incoterms": "Incoterms"}
                     excel_df.rename(columns=excel_cols, inplace=True)
                     all_input_data.extend(excel_df.to_dict('records'))
@@ -252,7 +256,7 @@ def main_dashboard(company_data):
             if not consent: st.warning("⚠️ 정보 활용 동의에 체크해주세요."); is_valid = False
             
             if is_valid:
-                with st.spinner('입력 데이터를 저장하고 분석을 시작합니다...'):
+                with st.spinner('입력하신 내용을 기반으로 분석을 시작합니다...'):
                     purchase_df = pd.DataFrame(all_input_data)
                     if save_to_google_sheets(purchase_df, importer_name, consent):
                         purchase_df['cleaned_name'] = purchase_df['Reported Product Name'].apply(clean_text)
@@ -293,7 +297,7 @@ def main_dashboard(company_data):
                         pie_fig.update_traces(textposition='inside', textinfo='percent+label'); st.plotly_chart(pie_fig, use_container_width=True)
                     st.markdown("---"); processed_hscodes.append(overview_res['hscode'])
 
-            for product_cleaned_name, group_info in st.session_state.analysis_groups.items():
+        for product_cleaned_name, group_info in st.session_state.analysis_groups.items():
                 st.subheader(f"분석 그룹: \"{group_info['user_input_df']['Reported Product Name'].iloc[0]}\"")
                 result = group_info.get("result", {})
 
