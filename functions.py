@@ -192,12 +192,9 @@ def main_dashboard(company_data):
         st.markdown("---")
         
         # --- 툴팁(Popover) UI 개선 ---
-        col1, col2 = st.columns([10, 1])
-        with col1:
-            st.markdown("##### **선택 2. 직접 입력하기**")
-        with col2:
-            with st.popover("ℹ️"):
-                st.markdown("""
+        st.markdown("##### **선택 2. 직접 입력하기**")
+        with st.popover("ℹ️"):
+            st.markdown("""
                 **입력 요령 가이드:**
                 - **수입일:** 거래가 발생한 날짜(YYYY-MM-DD)를 선택하세요.
                 - **제품 상세명:** 브랜드, 연산 등 제품을 특정할 수 있는 상세명을 입력하세요. (예: Glenfiddich 12년산)
