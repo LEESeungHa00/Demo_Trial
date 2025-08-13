@@ -187,7 +187,7 @@ def main_dashboard(company_data):
         except FileNotFoundError:
             st.warning("엑셀 템플릿 파일('수입내역_입력_템플릿.xlsx')을 찾을 수 없습니다.")
         
-        uploaded_file = st.file_uploader("📂 템플릿릿 양식에 작성한 엑셀 파일 업로드", type=['xlsx'])
+        uploaded_file = st.file_uploader("📂 템플릿 양식에 작성한 엑셀 파일 업로드", type=['xlsx'])
             
         st.markdown("---")
         
