@@ -66,7 +66,7 @@ def save_to_google_sheets(purchase_df, importer_name, consent):
         save_data_df = save_data_df[final_columns]
         if not worksheet.get('A1'): worksheet.update([save_data_df.columns.values.tolist()] + save_data_df.values.tolist(), value_input_option='USER_ENTERED')
         else: worksheet.append_rows(save_data_df.values.tolist(), value_input_option='USER_ENTERED')
-        st.toast("입력 정보가 정상 반영되어 분석이 진행됩니다다.", icon="✅")
+        st.toast("입력 정보가 정상 반영되어 분석이 진행됩니다.", icon="✅")
         return True
     except gspread.exceptions.APIError as e:
         st.error("Google Sheets API 오류. GCP에서 API 활성화 및 권한을 확인하세요.")
@@ -245,7 +245,7 @@ def main_dashboard(company_data):
         st.markdown("---")
         analysis_mode = st.radio("2. 분석 모드 선택", ["이번 거래 진단", "나의 과거 내역 분석"], key='analysis_mode', horizontal=True)
         st.info(f"**{analysis_mode} 모드:**{'입력한 거래(들)의 경쟁력을 빠르게 진단합니다.' if analysis_mode == '이번 거래 진단' else '입력한 과거 내역 전체의 성과 추이를 시장과 비교 분석합니다.'}")
-        consent = st.checkbox("정보 활용 동의", value=st.session_state.get('consent', True), key='consent_widget'); st.session_state['consent'] = consent
+        consent = st.checkbox("분석을 위해 입력하신 정보가 활용되는 것에 동의합니다.", value=st.session_state.get('consent', True), key='consent_widget'); st.session_state['consent'] = consent
         
         if st.button("분석하기", type="primary", use_container_width=True):
             all_input_data = []
