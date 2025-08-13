@@ -191,14 +191,27 @@ def main_dashboard(company_data):
             uploaded_file = st.file_uploader("📂 템플렛 양식에 작성한 엑셀 파일 업로드", type=['xlsx'])
             
         st.markdown("---")
-        st.markdown("##### **1-2. 직접 입력하기**")
         
-        headers_and_tooltips = {"수입일": "거래가 발생한 날짜(YYYY-MM-DD)를 선택하세요.", "제품 상세명": "브랜드, 연산 등 제품을 특정할 수 있는 상세명을 입력하세요. (예: Glenfiddich 12YO)", "HS-CODE": "분석하고 싶은 HS-CODE 6자리를 입력하세요. (예: 220830)", "원산지": "제품이 생산된 국가를 선택하거나 직접 입력하세요.", "수출업체": "거래한 수출업체명을 선택하거나 직접 입력하세요.", "수입 중량(KG)": "수입한 총 중량을 킬로그램(KG) 단위로 입력하세요.", "총 수입금액(USD)": "수입에 지불한 총 금액을 미국 달러(USD) 단위로 입력하세요.", "Incoterms": "거래에 적용된 인코텀즈 조건을 선택하세요.", "삭제": "해당 행을 삭제합니다."}
-        header_cols = st.columns([1.5, 3, 1, 2, 2, 1, 1, 1, 0.5])
-        for col, (header, tooltip) in zip(header_cols, headers_and_tooltips.items()):
-            col.markdown(f"**{header}**")
-            with col:
-                with st.popover("ℹ️", use_container_width=True): st.markdown(tooltip)
+        # --- 툴팁(Popover) UI 개선 ---
+        col1, col2 = st.columns([10, 1])
+        with col1:
+            st.markdown("##### **1-1. 직접 입력하기**")
+        with col2:
+            with st.popover("ℹ️"):
+                st.markdown("""
+                **입력 요령 가이드:**
+                - **수입일:** 거래가 발생한 날짜(YYYY-MM-DD)를 선택하세요.
+                - **제품 상세명:** 브랜드, 연산 등 제품을 특정할 수 있는 상세명을 입력하세요. (예: Glenfiddich 12년산)
+                - **HS-CODE:** 분석하고 싶은 HS-CODE 6자리를 입력하세요. (예: 220830)
+                - **원산지:** 제품이 생산된 국가를 선택하거나 직접 입력하세요.
+                - **수출업체:** 거래한 수출업체명을 선택하거나 직접 입력하세요.
+                - **수입 중량(KG):** 수입한 총 중량을 킬로그램(KG) 단위로 입력하세요.
+                - **총 수입금액(USD):** 수입에 지불한 총 금액을 미국 달러(USD) 단위로 입력하세요.
+                - **Incoterms:** 거래에 적용된 인코텀즈 조건을 선택하세요.
+                """)
+        
+        header_cols = st.columns([1.5, 3, 1, 2, 2, 1, 1, 1, 0.5]); headers = ["수입일", "제품 상세명", "HS-CODE", "원산지", "수출업체", "수입 중량(KG)", "총 수입금액(USD)", "Incoterms", "삭제"]
+        for col, header in zip(header_cols, headers): col.markdown(f"**{header}**")
         
         if 'rows' not in st.session_state: st.session_state['rows'] = [{'id': 1}]
         for i, row in enumerate(st.session_state.rows):
@@ -216,7 +229,7 @@ def main_dashboard(company_data):
             else: st.session_state[f'exporter{key_suffix}'] = exporter_val_selected
             st.session_state[f'volume{key_suffix}'] = cols[5].number_input(f"volume_widget{key_suffix}", min_value=0.01, format="%.2f", value=st.session_state.get(f'volume{key_suffix}', 1000.0), key=f"volume_widget_k{key_suffix}", label_visibility="collapsed")
             st.session_state[f'value{key_suffix}'] = cols[6].number_input(f"value_widget{key_suffix}", min_value=0.01, format="%.2f", value=st.session_state.get(f'value{key_suffix}', 10000.0), key=f"value_widget_k{key_suffix}", label_visibility="collapsed")
-            st.session_state[f'incoterms{key_suffix}'] = cols[7].selectbox(f"incoterms_widget{key_suffix}", ["CIF", "FOB", "CFR", "EXW", "DDP", "기타"], index=["CIF", "FOB", "CFR", "EXW", "DDP", "기타"].index(st.session_state.get(f'incoterms{key_suffix}', 'CIF')), key=f"incoterms_widget_k{key_suffix}", label_visibility="collapsed")
+            st.session_state[f'incoterms{key_suffix}'] = cols[7].selectbox(f"incoterms_widget{key_suffix}", ["FOB", "CFR", "CIF", "EXW", "DDP", "기타"], index=["FOB", "CFR", "CIF", "EXW", "DDP", "기타"].index(st.session_state.get(f'incoterms{key_suffix}', 'FOB')), key=f"incoterms_widget_k{key_suffix}", label_visibility="collapsed")
             if len(st.session_state.rows) > 1 and cols[8].button("삭제", key=f"delete{key_suffix}"): st.session_state.rows.pop(i); st.rerun()
         if st.button("➕ 내역 추가하기"):
             new_id = max(row['id'] for row in st.session_state.rows) + 1 if st.session_state.rows else 1; st.session_state.rows.append({'id': new_id}); st.rerun()
