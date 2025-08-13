@@ -187,7 +187,7 @@ def main_dashboard(company_data):
         except FileNotFoundError:
             st.warning("엑셀 템플릿 파일('수입내역_입력_템플릿.xlsx')을 찾을 수 없습니다.")
         
-        uploaded_file = st.file_uploader("📂 템플렛 양식에 작성한 엑셀 파일 업로드", type=['xlsx'])
+        uploaded_file = st.file_uploader("📂 템플릿릿 양식에 작성한 엑셀 파일 업로드", type=['xlsx'])
             
         st.markdown("---")
         
@@ -245,7 +245,7 @@ def main_dashboard(company_data):
 
         st.markdown("---")
         analysis_mode = st.radio("2. 분석 모드 선택", ["이번 거래 진단", "나의 과거 내역 분석"], key='analysis_mode', horizontal=True)
-        st.info(f"**{analysis_mode} 모드:**{'입력한 거래(들)의 경쟁력을 빠르게 진단합니다.' if analysis_mode == '이번 거래 진단' else '입력한 과거 내역 전체의 성과 추이를 시장과 비교 분석합니다.'}")
+        st.info(f"**{analysis_mode} 모드:**{'입력한 거래(들)의 경쟁력을 빠르게 진단합니다.' if analysis_mode == '이번 거래 진단' else '입력한 과거 내역 전체의 흐름을 전체 시장 추이와 비교 분석합니다.'}")
         consent = st.checkbox("분석을 위해 입력하신 정보가 활용되는 것에 동의합니다.", value=st.session_state.get('consent', True), key='consent_widget'); st.session_state['consent'] = consent
         
         if st.button("분석하기", type="primary", use_container_width=True):
