@@ -192,12 +192,16 @@ def main_dashboard(company_data):
         st.markdown("---")
         
         # --- 툴팁(Popover) UI 개선 ---
-        st.markdown("##### **선택 2. 직접 입력하기**")
-        with st.popover("ℹ️"):
-            st.markdown("""
+        col_title, col_popover, col_spacer = st.columns([2.5, 1, 6.5], gap="small") 
+    
+        with col_title:
+            st.markdown("##### **선택 2. 직접 입력하기**")
+        with col_popover:
+            with st.popover("ℹ️"):
+                st.markdown("""
                 **입력 요령 가이드:**
                 - **수입일:** 거래가 발생한 날짜(YYYY-MM-DD)를 선택하세요.
-                - **제품 상세명:** 브랜드, 연산 등 제품을 특정할 수 있는 상세명을 입력하세요. (예: Glenfiddich 12년산)
+                - **제품 상세명:** 브랜드, 연산 등 제품을 특정할 수 있는 상세명을 입력하세요. (예: Glenfiddich 12YO)
                 - **HS-CODE:** 분석하고 싶은 HS-CODE 6자리를 입력하세요. (예: 220830)
                 - **원산지:** 제품이 생산된 국가를 선택하거나 직접 입력하세요.
                 - **수출업체:** 거래한 수출업체명을 선택하거나 직접 입력하세요.
@@ -205,6 +209,7 @@ def main_dashboard(company_data):
                 - **총 수입금액(USD):** 수입에 지불한 총 금액을 미국 달러(USD) 단위로 입력하세요.
                 - **Incoterms:** 거래에 적용된 인코텀즈 조건을 선택하세요.
                 """)
+
         
         header_cols = st.columns([1.5, 3, 1, 2, 2, 1, 1, 1, 0.5]); headers = ["수입일", "제품 상세명", "HS-CODE", "원산지", "수출업체", "수입 중량(KG)", "총 수입금액(USD)", "Incoterms", "삭제"]
         for col, header in zip(header_cols, headers): col.markdown(f"**{header}**")
