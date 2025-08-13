@@ -192,7 +192,7 @@ def main_dashboard(company_data):
         st.markdown("---")
         
         # --- 툴팁(Popover) UI 개선 ---
-        col_title, col_popover, col_spacer = st.columns([1, 2.5, 6.5], gap="small") 
+        col_title, col_popover, col_spacer = st.columns([0.5, 3, 6.5], gap="small") 
     
         with col_title:
             st.markdown("##### **선택 2. 직접 입력하기**")
