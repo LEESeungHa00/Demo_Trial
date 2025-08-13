@@ -245,7 +245,7 @@ def main_dashboard(company_data):
 
         st.markdown("---")
         analysis_mode = st.radio("2. 분석 모드 선택", ["이번 거래 진단", "나의 과거 내역 분석"], key='analysis_mode', horizontal=True)
-        st.info(f"**{analysis_mode} 모드:**{'입력한 거래(들)의 경쟁력을 빠르게 진단합니다.' if analysis_mode == '이번 거래 진단' else '입력한 과거 내역 전체의 흐름을 전체 시장 추이와 비교 분석합니다.'}")
+        st.info(f"**{analysis_mode} 모드:**{'입력하신 거래(들)의 경쟁력을 빠르게 진단합니다.' if analysis_mode == '이번 거래 진단' else '입력하신 과거 내역 전체의 흐름을 전체 시장 추이와 비교 분석합니다.'}")
         consent = st.checkbox("분석을 위해 입력하신 정보가 활용되는 것에 동의합니다.", value=st.session_state.get('consent', True), key='consent_widget'); st.session_state['consent'] = consent
         
         if st.button("분석하기", type="primary", use_container_width=True):
