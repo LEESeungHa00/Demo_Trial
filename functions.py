@@ -180,15 +180,14 @@ def main_dashboard(company_data):
 
         st.markdown("---")
         st.markdown("##### **1-1. 엑셀 파일로 업로드하기**")
-        col1, col2 = st.columns(2)
-        with col1:
-            try:
-                with open("수입내역_입력_템플릿.xlsx", "rb") as file:
-                    st.download_button(label="📥 엑셀 템플릿 다운로드", data=file, file_name="수입내역_입력_템플릿.xlsx", mime="application/vnd.ms-excel")
-            except FileNotFoundError:
-                st.warning("엑셀 템플릿 파일('수입내역_입력_템플릿.xlsx')을 찾을 수 없습니다.")
-        with col2:
-            uploaded_file = st.file_uploader("📂 템플렛 양식에 작성한 엑셀 파일 업로드", type=['xlsx'])
+        
+        try:
+            with open("수입내역_입력_템플릿.xlsx", "rb") as file:
+                st.download_button(label="📥 엑셀 템플릿 다운로드", data=file, file_name="수입내역_입력_템플릿.xlsx", mime="application/vnd.ms-excel")
+        except FileNotFoundError:
+            st.warning("엑셀 템플릿 파일('수입내역_입력_템플릿.xlsx')을 찾을 수 없습니다.")
+        
+        uploaded_file = st.file_uploader("📂 템플렛 양식에 작성한 엑셀 파일 업로드", type=['xlsx'])
             
         st.markdown("---")
         
