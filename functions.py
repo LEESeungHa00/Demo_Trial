@@ -179,7 +179,7 @@ def main_dashboard(company_data):
 
 
         st.markdown("---")
-        st.markdown("##### **1-1. 엑셀 파일로 업로드하기**")
+        st.markdown("##### **선택 1. 엑셀 파일로 업로드하기**")
         
         try:
             with open("수입내역_입력_템플릿.xlsx", "rb") as file:
@@ -194,7 +194,7 @@ def main_dashboard(company_data):
         # --- 툴팁(Popover) UI 개선 ---
         col1, col2 = st.columns([10, 1])
         with col1:
-            st.markdown("##### **1-1. 직접 입력하기**")
+            st.markdown("##### **선택 2. 직접 입력하기**")
         with col2:
             with st.popover("ℹ️"):
                 st.markdown("""
